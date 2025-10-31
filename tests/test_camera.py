@@ -15,10 +15,14 @@ import logging
 import time
 from pathlib import Path
 
+# Add libcamera path for RaspberryPi
+sys.path.insert(0, '/usr/lib/aarch64-linux-gnu/python3.12/site-packages')
+
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from src.camera.camera_controller import CameraController
+# Import via __init__ for fallback support
+from src.camera import CameraController
 
 # Setup logging
 logging.basicConfig(

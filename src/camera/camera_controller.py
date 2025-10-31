@@ -8,13 +8,31 @@ Target: 30 FPS @ 640x480 resolution
 import numpy as np
 import logging
 from typing import Optional, Tuple
-from picamera2 import Picamera2
-from picamera2.encoders import JpegEncoder
-from picamera2.outputs import FileOutput
-import io
+import os
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Try to import Picamera2 with graceful fallback for missing GUI dependencies
+try:
+    from picamera2 import Picamera2
+    try:
+        from picamera2 import Preview
+        PREVIEW_AVAILABLE = True
+    except (ImportError, ModuleNotFoundError):
+        PREVIEW_AVAILABLE = False
+        logger.warning("Preview module not available (pykms not installed)")
+except ImportError as e:
+    logger.error(f"Failed to import Picamera2: {e}")
+    raise
+
+try:
+    from picamera2.encoders import JpegEncoder
+    from picamera2.outputs import FileOutput
+except ImportError:
+    pass
+
+import io
 
 
 class CameraController:
