@@ -1,0 +1,57 @@
+# Robot Configuration File
+# YAML format for easy reading and modification
+
+camera:
+  resolution: [640, 480]
+  framerate: 30
+  sensor_mode: 0
+  exposure_mode: "auto"
+  iso: 100
+
+detection:
+  model_path: "models/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite"
+  labels_path: "models/coco_labels.txt"
+  confidence_threshold: 0.5
+  iou_threshold: 0.5
+  sports_ball_class: 37
+
+tracking:
+  pid_kp: 0.5
+  pid_ki: 0.1
+  pid_kd: 0.2
+  servo_min_angle: -90
+  servo_max_angle: 90
+  servo_range: 180
+  target_center_x: 320
+  target_center_y: 240
+
+positioning:
+  servo_range: 180
+  distance_min: 10
+  distance_max: 300
+  calibration_offset: 0.0
+
+prediction:
+  history_size: 10
+  polynomial_order: 2
+  predict_frames: 5
+
+arduino:
+  port: "/dev/ttyACM0"
+  baudrate: 9600
+  timeout: 1.0
+  command_timeout: 100  # ms
+
+system:
+  target_fps: 30
+  inference_timeout: 20  # ms
+  debug: false
+  log_level: "INFO"
+  log_dir: "logs"
+
+walk_control:
+  gait_type: "crab"  # crab walking pattern
+  step_height: 5  # cm
+  step_duration: 500  # ms
+  rotation_angle: 45  # degrees
+  forward_speed: 10  # cm/s
