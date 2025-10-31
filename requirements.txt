@@ -1,0 +1,31 @@
+# Python 3.9+
+
+# Core dependencies
+numpy>=1.21.0
+opencv-python>=4.5.0
+
+# Camera and image processing
+picamera2>=0.3.8
+Pillow>=8.3.0
+
+# ML/AI - Google Coral TPU
+pycoral>=2.0.0
+tflite-runtime>=2.5.0
+
+# Robot control and communication
+pyserial>=3.5
+
+# Sensor processing
+scipy>=1.7.0
+
+# Utilities
+python-dotenv>=0.19.0
+pyyaml>=5.4.0
+
+# Development and testing
+pytest>=6.2.5
+black>=21.9b0
+flake8>=3.9.0
+
+# Monitoring and logging
+prometheus-client>=0.12.0

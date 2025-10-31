@@ -1,0 +1,438 @@
+課題
+学校の課題で４足歩行(カニ型)ロボットで基本機能(歩行・回転・３cmの段差を登れる)を満たし、PKの課題(向かってくるボールを止める)をクリアできるロボットを開発する。
+このプロジェクトでは主にソフトウェアの部分を重点的に開発する。
+使用可能な主要部品やマイコンは以下の通りである。
+・ArduinoUno・RaspberryPi4 (8GB,Ubuntu OS), RaspberryPi4(8GB, OSは未定)・サーボモータ・サーボドライバ・DCモータ・TPU(GoogleCoral)・RaspberryPiCameraModule3・超音波センサ・各種電源・LANケーブルやL2SWなど・GroveBaseHat・IoT用の様々なセンサ類・ジャンパワイヤ・レーザ加工機
+
+
+ボール追跡
+今回はRaspberryPiCameraModule３とTPUを用いて機械学習モデルをTPU上で動かす。この際,リアルタイム性にも意識しつつ(最低でも20fps)、RaspberryPiCameraの画面の中央に常にボールが来るように制御し、サーボモータでカメラを回転させる際に同軸にカメラの視線のできるだけ近くに超音波センサーを設置させておき、ボールと超音波センサの距離を測ることでリアルタイムでボールの位置をx-y座標上にマッピングをする。つまり、サーボモータの角度と超音波センサで取得した距離で物体の位置を把握するのである。サーボモータや超音波センサなどはArduino側で制御し、カメラはRaspberryPi側で動作させる。
+例：RaspberryPiCameraでボールを画面中央に追従（サーボ角度θ)→超音波センサー(距離dcm) →座標変換→ボールの位置（x-y）x=d*cos(θ), ｙ=d*sin(θ)
+機械学習モデルは既存のCOCO事前学習モデルを用いてボールを検出する。(既存のモデルで検出制度は80%以上を目指し、十分追従できれば良い。)もし、既存のCOCO事前学習モデルではうまく検出できない・追従できない場合はボールの写真を約500枚ほど撮影してファインチューニングさせる。
+
+
+
+実装順序
+１．プロジェクトのディレクトリやファイルを作成｡このとき一つのファイルが大きくならないようにコンポーネント化することを心がける。AIAgentを用いてコーディングする際にコンポーネント化したほうが管理のしやすさやバグの少なさを実感した経験があるから。また、所々でGitHubにCommit・Pushすることを忘れないように。後のロールバックのために。
+２．各種部品の動作確認を行う。すでにArduinoでServoMortorと超音波センサは動作確認済み。RaspberryPiCameraの動作確認をRaspberryPiのOSがUbuntuServerであることを踏まえて行う。
+３．次にTPU(GoogleCoral)の動作確認を行う。先程選定した機械学習モデルを用いてTPUの動作確認を行い、できればRaspberryPiCameraで取得した画像をTPUで処理できるところまで確認したい。
+４．次にボールの検知を行う。サッカーボールをRaspberryPiCameraで撮影し、それを逐一TPUが機械学習モデルで処理し、ボールを検知する。このとき、超音波センサーも同時に動作確認できるとなお良い。
+５．ボールの検知に成功後，ボールがカメラの画面中央に常に位置するようにサーボモータを制御する。その際，サーボモータの角度と超音波センサーの距離でボールの位置をx-y座標にマッピングまでできると良い。
+６．ハードウェアと結合完了後，余裕があればもう一台のRaspberryPiなどを使ってPrometheus＋Grafanaでメトリクス収集を行っても良い。また、Kubernetesで各サービスをマイクロサービス化してコンテナオーケストレーションを試しても良い。MasterNodeは１台だが、ラズパイは全部で５台あるのでWorkerNodeは４台まで確保可能｡可用性を高めたり、HPA,VPAなどで性能をスケーラブルにしたり、より高次元の操作をしても良い。挑戦的ではあるが。
+
+
+
+
+## 機械学習モデル
+
+### COCO事前学習モデル
+- **モデル**: `ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite`
+- **ダウンロード元**: https://github.com/google-coral/test_data
+- **検出対象**: "sports ball" (COCO class 37)
+- **目標検出率**: 80%以上
+- **評価基準**: 
+  - 検出率 < 70% → カスタムモデル学習へ
+  - 検出率 ≥ 80% → そのまま使用
+
+### カスタムモデル（必要時のみ）
+- **データ収集**: スマホで連射撮影、約500枚
+- **撮影条件**:
+  - 距離: 0.5m, 1m, 2m, 3m, 5m
+  - 照明: 明るい、普通、暗い
+  - 動き: 静止、転がる、投げる
+  - 背景: シンプル、複雑、実際のゴール前
+- **アノテーション**: LabelImg or Roboflow
+- **学習環境**: Google Colab (GPU無料)
+- **フレームワーク**: TensorFlow 2.x + Object Detection API
+- **ファインチューニング**: Transfer Learning
+- **Data Augmentation**: 有効化（水平反転、明度・コントラスト調整、ぼかし）
+
+## 実装順序
+
+### Phase １: 環境セットアップ
+````bash
+# ディレクトリ構成例
+pk_robot/
+├── README.md
+├── requirements.txt
+├── .gitignore
+├── models/                      # 学習モデル
+│   ├── ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
+│   └── coco_labels.txt
+├── src/
+│   ├── __init__.py
+│   ├── main.py                  # メインプログラム
+│   ├── camera/                  # カメラ関連
+│   │   ├── __init__.py
+│   │   ├── camera_controller.py
+│   │   └── frame_processor.py
+│   ├── detection/               # 物体検出
+│   │   ├── __init__.py
+│   │   ├── ball_detector.py
+│   │   └── tpu_engine.py
+│   ├── tracking/                # 追跡制御
+│   │   ├── __init__.py
+│   │   ├── tracker.py
+│   │   └── pid_controller.py
+│   ├── positioning/             # 位置推定
+│   │   ├── __init__.py
+│   │   ├── coordinate_transformer.py
+│   │   └── kalman_filter.py
+│   ├── prediction/              # 軌道予測
+│   │   ├── __init__.py
+│   │   └── trajectory_predictor.py
+│   ├── arduino/                 # Arduino通信
+│   │   ├── __init__.py
+│   │   └── serial_controller.py
+│   ├── arm/                     # ロボットアーム
+│   │   ├── __init__.py
+│   │   └── inverse_kinematics.py
+│   └── utils/                   # ユーティリティ
+│       ├── __init__.py
+│       ├── logger.py
+│       └── config.py
+├── arduino/
+│   └── robot_controller/
+│       └── robot_controller.ino # Arduinoスケッチ
+├── tests/                       # テストコード
+│   ├── test_camera.py
+│   ├── test_detection.py
+│   └── test_tracking.py
+├── scripts/                     # セットアップスクリプト
+│   ├── setup_camera.sh
+│   ├── setup_tpu.sh
+│   └── download_models.sh
+└── logs/                        # ログファイル
+````
+
+**重要な設計原則:**
+- ✅ 1ファイル200行以内を目標
+- ✅ 各機能はモジュール化・コンポーネント化
+- ✅ 依存関係を最小化
+- ✅ テストコードを必ず書く
+- ✅ 定期的にGit commit/push
+
+### Phase 1: カメラセットアップ（今ここ）
+**目標**: RaspberryPi Camera Module 3の動作確認
+
+**タスク:**
+1. カメラの物理接続確認
+2. 必要なパッケージインストール
+3. カメラデバイス認識確認
+4. picamera2での画像取得テスト
+5. 解像度・FPS設定の最適化
+
+**成功基準:**
+- ✅ カメラからリアルタイムで画像取得可能（30fps）
+- ✅ 640x480解像度で安定動作
+- ✅ 画像をファイル保存可能
+
+**セットアップコマンド（Ubuntu Server）:**
+````bash
+# カメラ有効化
+sudo raspi-config
+# Interface Options → Camera → Enable
+
+# 必要パッケージ
+sudo apt update
+sudo apt install -y python3-picamera2 python3-opencv python3-numpy
+
+# カメラ認識確認
+libcamera-hello --list-cameras
+vcgencmd get_camera
+
+# テストプログラム実行
+python3 tests/test_camera.py
+````
+
+### Phase 2: TPU動作確認
+**目標**: Google Coral USB AcceleratorでCOCOモデル推論
+
+**タスク:**
+1. Coral USB接続・認識確認
+2. Edge TPU Runtimeインストール
+3. PyCoral ライブラリインストール
+4. COCOモデルダウンロード
+5. 静止画での推論テスト
+6. カメラ画像での推論テスト
+
+**成功基準:**
+- ✅ TPU推論時間 <20ms
+- ✅ FPS 30以上
+- ✅ "sports ball"検出動作
+
+**セットアップコマンド:**
+````bash
+# Coral USB設定
+echo "deb https://packages.cloud.google.com/apt coral-edgetpu-stable main" | sudo tee /etc/apt/sources.list.d/coral-edgetpu.list
+curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+sudo apt update
+sudo apt install -y libedgetpu1-std python3-pycoral
+
+# モデルダウンロード
+mkdir -p ~/pk_robot/models
+cd ~/pk_robot/models
+wget https://github.com/google-coral/test_data/raw/master/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
+wget https://github.com/google-coral/test_data/raw/master/coco_labels.txt
+
+# テスト実行
+python3 tests/test_detection.py
+````
+
+### Phase 3: Arduino連携セットアップ
+**目標**: RaspberryPi ↔ Arduino間のシリアル通信確立
+
+**タスク:**
+1. Arduino Unoスケッチ作成
+2. サーボモーター制御実装
+3. 超音波センサー読み取り実装
+4. PCA9685サーボドライバ実装
+5. シリアル通信プロトコル実装
+6. RaspberryPi側通信ライブラリ作成
+
+**成功基準:**
+- ✅ コマンド送信→応答受信が動作
+- ✅ サーボが指定角度に動く
+- ✅ 超音波センサーの距離が取得できる
+- ✅ レイテンシ <10ms
+
+### Phase 4: ボール検出テスト
+**目標**: リアルタイムボール検出動作
+
+**タスク:**
+1. カメラ + TPU統合
+2. サッカーボールでの検出テスト
+3. 検出率測定（目標80%以上）
+4. FPS測定（目標30fps以上）
+5. 検出結果の可視化
+
+**成功基準:**
+- ✅ 検出率 ≥ 80%
+- ✅ FPS ≥ 25
+- ✅ False Positive率 <10%
+
+### Phase 5: カメラ追従制御
+**目標**: ボールを画面中央に追従
+
+**タスク:**
+1. PID制御パラメータ調整
+2. サーボ制御統合
+3. 追従精度測定
+4. デッドゾーン調整
+5. 超音波センサー距離取得統合
+
+**成功基準:**
+- ✅ 追従精度 ±20px以内（中央320x240基準）
+- ✅ 応答時間 <200ms
+- ✅ 安定した追従動作（振動なし）
+
+### Phase 6: 2D位置推定
+**目標**: サーボ角度 + 距離 → 2D座標変換
+
+**タスク:**
+1. 座標変換関数実装
+2. カルマンフィルタ実装（ノイズ除去）
+3. キャリブレーション実施
+4. 精度評価
+
+**成功基準:**
+- ✅ 位置推定誤差 ±10cm以内（2m距離時）
+- ✅ カルマンフィルタで安定化
+
+### Phase 7: 軌道予測
+**目標**: ボールの着地点予測
+
+**タスク:**
+1. 2D軌跡データ収集
+2. 物理モデル（放物線運動）実装
+3. 着地点予測アルゴリズム
+4. 予測精度評価
+
+**成功基準:**
+- ✅ 5フレーム以上の軌跡で予測可能
+- ✅ 予測誤差 ±15cm以内
+
+
+### Phase 8: 統合テスト
+**目標**: システム全体の動作確認
+
+**タスク:**
+1. エンドツーエンドテスト
+2. ブロック成功率測定
+3. パフォーマンスチューニング
+4. エラーハンドリング強化
+
+**成功基準:**
+- ✅ ブロック成功率 ≥ 60%
+- ✅ システム安定動作
+
+### Phase 9: 監視基盤（オプション）
+**目標**: Prometheus + Grafana でメトリクス可視化
+
+**タスク:**
+1. メトリクスエクスポーター実装
+2. Prometheus設定
+3. Grafana ダッシュボード作成
+4. アラート設定
+
+**メトリクス例:**
+- FPS
+- 推論レイテンシ
+- 検出率
+- 追従精度
+- ブロック成功率
+
+## 重要な注意点
+
+### 1. Ubuntu Serverでのカメラ使用
+- ✅ `picamera2`を使用（`picamera`は古い）
+- ✅ libcameraベースの設定
+- ❌ GUI不要（SSH経由でOK）
+
+### 2. 電源管理
+- ⚠️ サーボとRaspberryPiの電源は分離必須
+- ⚠️ 同時に複数サーボを動かすと電力不足の可能性
+- ⚠️ 電源容量: 最低10A推奨
+
+### 3. リアルタイム性
+- ⚠️ Python GILの影響あり
+- ⚠️ マルチスレッド/マルチプロセス検討
+- ✅ TPUは別スレッドで動作
+
+### 4. デバッグ
+- ✅ SSH + tmux/screen で複数セッション
+- ✅ ログファイルに詳細記録
+- ✅ 段階的テスト（統合前に各機能を個別確認）
+
+### 5. Git管理
+- ✅ 動作確認毎にcommit
+- ✅ 意味のあるcommitメッセージ
+- ✅ ブランチ戦略: `main`, `develop`, `feature/*`
+- ❌ 大きなファイル（モデル、画像）はgitignore
+
+## 次のステップ（今すぐ実行）
+
+### カメラセットアップコマンド
+````bash
+# 1. カメラ有効化（リブート必要）
+sudo raspi-config
+# → Interface Options → Camera → Enable → Finish → Reboot
+
+# 2. 再起動後、カメラ認識確認
+libcamera-hello --list-cameras
+# 出力例: Available cameras: 1
+
+# 3. 必要パッケージインストール
+sudo apt update
+sudo apt install -y python3-picamera2 python3-opencv python3-numpy python3-pip
+
+# 4. プロジェクトディレクトリ作成
+mkdir -p ~/pk_robot
+cd ~/pk_robot
+
+# 5. Gitリポジトリ初期化
+git init
+git config user.name "Your Name"
+git config user.email "your.email@example.com"
+
+# 6. .gitignore作成
+cat > .gitignore << 'EOF'
+*.pyc
+__pycache__/
+*.log
+*.tflite
+*.jpg
+*.png
+*.mp4
+.vscode/
+.idea/
+logs/
+models/*.tflite
+EOF
+
+# 7. README作成
+cat > README.md << 'EOF'
+# PKゴールキーパーロボット
+
+## 概要
+RaspberryPi + TPU + カメラでボールを検出・追跡し、ロボットアームでブロックする。
+
+## セットアップ
+```bash
+./scripts/setup.sh
+```
+
+## 実行
+```bash
+python3 src/main.py
+```
+EOF
+
+# 8. 初回コミット
+git add .
+git commit -m "Initial commit: Project structure"
+
+# 9. テストプログラム作成
+mkdir -p tests
+cat > tests/test_camera.py << 'EOF'
+#!/usr/bin/env python3
+"""
+Camera test script
+"""
+from picamera2 import Picamera2
+import time
+
+def main():
+    print("=== Camera Test ===")
+    
+    # カメラ初期化
+    picam2 = Picamera2()
+    config = picam2.create_preview_configuration(
+        main={"size": (640, 480), "format": "RGB888"}
+    )
+    picam2.configure(config)
+    
+    print("Starting camera...")
+    picam2.start()
+    time.sleep(2)
+    
+    print("Capturing test image...")
+    frame = picam2.capture_array()
+    
+    print(f"Frame shape: {frame.shape}")
+    print(f"Frame dtype: {frame.dtype}")
+    
+    # 画像保存
+    from PIL import Image
+    img = Image.fromarray(frame)
+    img.save('test_capture.jpg')
+    print("Image saved to test_capture.jpg")
+    
+    picam2.stop()
+    print("✅ Camera test passed!")
+
+if __name__ == '__main__':
+    main()
+EOF
+
+chmod +x tests/test_camera.py
+
+# 10. テスト実行
+python3 tests/test_camera.py
+````
+
+### 実行して確認すべきこと
+
+1. ✅ カメラが認識されているか
+2. ✅ `test_capture.jpg`が生成されているか
+3. ✅ エラーが出ていないか
+## まとめ
+
+このドキュメントに従って：
+1. ✅ 段階的に実装
+2. ✅ 各Phaseで動作確認
+3. ✅ Git管理を徹底
+4. ✅ コンポーネント化を維持
+
+現在は**Phase 1: カメラセットアップ**です。上記のコマンドを実行して、カメラの動作確認から始めてください！
+
