@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-TPUボール検出 カメラストリーミング
-PyCoral + Edge TPUでリアルタイムボール検出
+最適化版 YOLO形式TPUボール検出 カメラストリーミング
+NumPy vectorizationでYOLO後処理を高速化
 
 使い方:
-  python3 scripts/camera_stream_tpu.py
+  python3 scripts/camera_stream_yolo_optimized.py
   ブラウザで http://<RaspberryPiのIPアドレス>:8000 にアクセス
 """
 
@@ -27,7 +27,6 @@ from src.camera import CameraController
 # PyCoral インポート
 from pycoral.utils import edgetpu
 from pycoral.adapters import common
-from pycoral.adapters import detect
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,6 +54,81 @@ current_fps = 0
 total_detections = 0
 ball_detections = 0
 avg_inference_time = 0
+
+
+def postprocess_yolo_output_optimized(output_data, input_shape, conf_threshold=0.5, iou_threshold=0.45):
+    """
+    最適化版YOLO形式の出力を後処理（NumPy vectorization使用）
+
+    Args:
+        output_data: モデルの出力テンソル [1, 5, 8400] 形式
+        input_shape: 入力画像のサイズ (height, width)
+        conf_threshold: 信頼度閾値
+        iou_threshold: NMS用のIoU閾値
+
+    Returns:
+        検出結果のリスト
+    """
+    # [1, 5, 8400] -> [8400, 5]
+    predictions = output_data[0].transpose()
+
+    h, w = input_shape
+
+    # ベクトル化: 信頼度フィルタリング
+    confidences = predictions[:, 4]
+    mask = confidences >= conf_threshold
+
+    if not mask.any():
+        return []
+
+    # フィルタリング後の予測のみ処理
+    filtered_preds = predictions[mask]
+
+    # ベクトル化: バウンディングボックス変換
+    x_centers = filtered_preds[:, 0]
+    y_centers = filtered_preds[:, 1]
+    widths = filtered_preds[:, 2]
+    heights = filtered_preds[:, 3]
+    scores = filtered_preds[:, 4]
+
+    # 正規化座標に変換
+    xmins = (x_centers - widths / 2) / w
+    ymins = (y_centers - heights / 2) / h
+    xmaxs = (x_centers + widths / 2) / w
+    ymaxs = (y_centers + heights / 2) / h
+
+    # クリッピング
+    xmins = np.clip(xmins, 0, 1)
+    ymins = np.clip(ymins, 0, 1)
+    xmaxs = np.clip(xmaxs, 0, 1)
+    ymaxs = np.clip(ymaxs, 0, 1)
+
+    # NMS用に実座標に変換
+    boxes_for_nms = np.stack([
+        xmins * w,
+        ymins * h,
+        xmaxs * w,
+        ymaxs * h
+    ], axis=1)
+
+    # NMS
+    indices = cv2.dnn.NMSBoxes(
+        boxes_for_nms.tolist(),
+        scores.tolist(),
+        conf_threshold,
+        iou_threshold
+    )
+
+    detections = []
+    if len(indices) > 0:
+        for i in indices.flatten():
+            detections.append({
+                'class': 0,
+                'score': float(scores[i]),
+                'bbox': [float(xmins[i]), float(ymins[i]), float(xmaxs[i]), float(ymaxs[i])]
+            })
+
+    return detections
 
 
 # HTTPリクエストハンドラ
@@ -92,7 +166,6 @@ class StreamingHandler(BaseHTTPRequestHandler):
             except Exception as e:
                 logger.warning(f'Removed streaming client {self.client_address}: {str(e)}')
         elif self.path == '/stats':
-            # 統計情報をJSON形式で返す
             stats = {
                 'fps': current_fps,
                 'total_detections': total_detections,
@@ -113,7 +186,6 @@ class StreamingHandler(BaseHTTPRequestHandler):
             self.end_headers()
 
     def log_message(self, format, *args):
-        # アクセスログを抑制
         return
 
 
@@ -122,7 +194,7 @@ PAGE = """\
 <html>
 <head>
 <meta charset="utf-8">
-<title>⚽ Edge TPU Ball Detection - Live Stream</title>
+<title>⚽ Optimized YOLO Ball Detection</title>
 <style>
 body {
     margin: 0;
@@ -133,7 +205,7 @@ body {
     text-align: center;
 }
 h1 {
-    background: linear-gradient(90deg, #4CAF50, #8BC34A);
+    background: linear-gradient(90deg, #FF6B6B, #FF8E53);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     font-size: 2.5em;
@@ -150,7 +222,7 @@ h1 {
 }
 img {
     max-width: 100%;
-    border: 3px solid #4CAF50;
+    border: 3px solid #FF6B6B;
     border-radius: 12px;
     box-shadow: 0 8px 16px rgba(0,0,0,0.4);
 }
@@ -174,14 +246,14 @@ img {
 }
 .stat-item {
     padding: 10px;
-    background: rgba(76, 175, 80, 0.2);
+    background: rgba(255, 107, 107, 0.2);
     border-radius: 5px;
-    border-left: 3px solid #4CAF50;
+    border-left: 3px solid #FF6B6B;
 }
 .stat-value {
     font-size: 1.8em;
     font-weight: bold;
-    color: #4CAF50;
+    color: #FF6B6B;
 }
 .ball-detected {
     color: #FFD700;
@@ -207,37 +279,38 @@ img {
     margin-right: 10px;
     border-radius: 3px;
 }
-.box-other {
-    width: 24px;
-    height: 24px;
-    background-color: rgba(0, 255, 0, 0.3);
-    border: 2px solid lime;
-    margin-right: 10px;
-    border-radius: 3px;
-}
 .tpu-badge {
     display: inline-block;
-    background: linear-gradient(90deg, #4CAF50, #8BC34A);
+    background: linear-gradient(90deg, #FF6B6B, #FF8E53);
     color: white;
     padding: 5px 15px;
     border-radius: 20px;
     font-weight: bold;
     margin: 10px 0;
 }
+.optimized-badge {
+    display: inline-block;
+    background: linear-gradient(90deg, #00d2ff, #3a7bd5);
+    color: white;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-weight: bold;
+    margin: 10px 5px;
+}
 </style>
 </head>
 <body>
 <div class="container">
-<h1>⚽ Edge TPU Ball Detection</h1>
-<div class="subtitle">🚀 リアルタイムボール検出システム</div>
+<h1>⚽ Optimized YOLO Ball Detection</h1>
+<div class="subtitle">🚀 NumPy Vectorization最適化版</div>
 <div class="tpu-badge">✨ Powered by Google Coral Edge TPU</div>
+<div class="optimized-badge">⚡ Performance Optimized</div>
 <img src="stream.mjpg" />
 <div class="info">
-    <p><strong>📷 カメラ:</strong> RaspberryPi Camera Module 3 (IMX708)</p>
-    <p><strong>🎯 解像度:</strong> 640x480 @ 30fps</p>
-    <p><strong>🧠 検出モデル:</strong> SSD MobileNet v2 COCO (TPU版)</p>
-    <p><strong>⚡ アクセラレータ:</strong> Google Coral USB Accelerator</p>
-    <p><strong>🎪 ターゲット:</strong> Sports Ball (COCO Class 37)</p>
+    <p><strong>📷 カメラ:</strong> RaspberryPi Camera Module 3</p>
+    <p><strong>🎯 解像度:</strong> 640x480</p>
+    <p><strong>🧠 モデル:</strong> Custom YOLO (640x640 TPU)</p>
+    <p><strong>⚡ 最適化:</strong> NumPy Vectorization</p>
 
     <div class="stats">
         <div class="stat-item">
@@ -260,13 +333,11 @@ img {
 </div>
 <div class="legend">
     <p><strong>🎨 検出表示:</strong></p>
-    <div class="legend-item"><span class="box-ball"></span> スポーツボール（赤色・太線）</div>
-    <div class="legend-item"><span class="box-other"></span> その他のオブジェクト（緑色）</div>
+    <div class="legend-item"><span class="box-ball"></span> サッカーボール</div>
 </div>
 </div>
 
 <script>
-// 統計情報を定期的に更新
 setInterval(function() {
     fetch('/stats')
         .then(response => response.json())
@@ -277,7 +348,7 @@ setInterval(function() {
             document.getElementById('balls').textContent = data.ball_detections;
         })
         .catch(err => console.error('Stats update failed:', err));
-}, 500);  // 0.5秒ごとに更新
+}, 500);
 </script>
 </body>
 </html>
@@ -292,53 +363,29 @@ class StreamingServer(HTTPServer):
 def update_detection_stats(detections):
     """検出統計を更新"""
     global total_detections, ball_detections
-
     total_detections += len(detections)
-    for det in detections:
-        if det.id == 36:  # sports ball (COCO class 36)
-            ball_detections += 1
+    ball_detections += len(detections)
 
 
 def draw_detections(frame, detections):
-    """
-    フレームに検出結果を描画（PyCoral形式）
-
-    Args:
-        frame: 入力フレーム (RGB)
-        detections: PyCoral検出結果のリスト
-
-    Returns:
-        描画済みフレーム
-    """
+    """フレームに検出結果を描画"""
     h, w = frame.shape[:2]
 
     for det in detections:
-        # PyCoral BBox形式: det.bbox (BBox object with xmin, ymin, xmax, ymax)
-        bbox = det.bbox
-        score = det.score
-        class_id = det.id
+        bbox = det['bbox']
+        score = det['score']
 
-        # 座標を画像サイズに変換（正規化座標から実座標へ）
-        xmin = int(bbox.xmin * w)
-        ymin = int(bbox.ymin * h)
-        xmax = int(bbox.xmax * w)
-        ymax = int(bbox.ymax * h)
+        xmin = int(bbox[0] * w)
+        ymin = int(bbox[1] * h)
+        xmax = int(bbox[2] * w)
+        ymax = int(bbox[3] * h)
 
-        # ボール（class 36）は赤、その他は緑
-        if class_id == 36:
-            color = (255, 0, 0)  # 赤 (RGB)
-            label = f"Ball {score:.2f}"
-            thickness = 3
-        else:
-            color = (0, 255, 0)  # 緑
-            label_name = labels[class_id] if class_id < len(labels) else f"ID:{class_id}"
-            label = f"{label_name} {score:.2f}"
-            thickness = 2
+        color = (255, 0, 0)
+        label = f"Ball {score:.2f}"
+        thickness = 3
 
-        # バウンディングボックスを描画
         cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), color, thickness)
 
-        # ラベル背景を描画
         label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
         label_ymin = max(ymin, label_size[1] + 10)
         cv2.rectangle(frame, (xmin, label_ymin - label_size[1] - 10),
@@ -350,9 +397,7 @@ def draw_detections(frame, detections):
 
 
 def process_frames(camera):
-    """
-    フレームを処理し、TPUで検出してストリーミング
-    """
+    """フレームを処理し、TPUで検出してストリーミング"""
     global fps_counter, fps_start_time, current_fps, avg_inference_time
 
     logger.info("フレーム処理ループ開始")
@@ -361,43 +406,57 @@ def process_frames(camera):
     last_detections = []
     inference_times = []
 
+    # 入力情報取得
+    input_details = interpreter.get_input_details()[0]
+    output_details = interpreter.get_output_details()[0]
+    input_shape = input_details['shape'][1:3]
+
+    input_scale = input_details['quantization'][0]
+    input_zero_point = input_details['quantization'][1]
+    output_scale = output_details['quantization'][0]
+    output_zero_point = output_details['quantization'][1]
+
     while True:
-        # フレーム取得
         frame = camera.capture_frame()
         if frame is None:
             continue
 
-        # TPU検出実行（毎フレーム）
         frame_count += 1
         if detection_enabled and interpreter:
             inference_start = time.time()
 
-            # 画像リサイズと前処理
-            input_size = common.input_size(interpreter)
-            resized = np.array(
-                np.resize(frame, (input_size[0], input_size[1], 3)),
-                dtype=np.uint8
-            )
+            # リサイズ
+            resized = cv2.resize(frame, (input_shape[1], input_shape[0]))
+
+            # 量子化
+            input_data = (resized.astype(np.float32) / input_scale + input_zero_point).astype(np.int8)
+            input_data = np.expand_dims(input_data, axis=0)
 
             # TPU推論
-            common.set_input(interpreter, resized)
+            interpreter.set_tensor(input_details['index'], input_data)
             interpreter.invoke()
 
-            # 検出結果取得
-            last_detections = detect.get_objects(interpreter, score_threshold=0.5)
+            # 結果取得と逆量子化
+            output_data = interpreter.get_tensor(output_details['index'])
+            output_data = (output_data.astype(np.float32) - output_zero_point) * output_scale
+
+            # 最適化版YOLO後処理
+            last_detections = postprocess_yolo_output_optimized(
+                output_data,
+                input_shape=(input_shape[0], input_shape[1]),
+                conf_threshold=0.5,
+                iou_threshold=0.45
+            )
 
             inference_time = (time.time() - inference_start) * 1000
             inference_times.append(inference_time)
 
-            # 統計更新
             update_detection_stats(last_detections)
 
-            # 推論時間の移動平均（最新30フレーム）
             if len(inference_times) > 30:
                 inference_times.pop(0)
             avg_inference_time = np.mean(inference_times)
 
-        # 検出結果を描画
         if last_detections:
             frame = draw_detections(frame, last_detections)
 
@@ -418,7 +477,6 @@ def process_frames(camera):
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         _, jpeg = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
 
-        # ストリーミング出力に書き込み
         with output.condition:
             output.frame = jpeg.tobytes()
             output.condition.notify_all()
@@ -426,13 +484,11 @@ def process_frames(camera):
 
 if __name__ == '__main__':
     print("=" * 70)
-    print("🚀 Edge TPU ボール検出 カメラストリーミング")
+    print("🚀 最適化版 YOLO TPU ボール検出")
     print("=" * 70)
 
-    # TPUモデル初期化
-    model_path = "models/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite"
-    #model_path = "models/best_full_integer_quant_edgetpu.tflite"
-    labels_path = "models/coco_labels.txt"
+    model_path = "models/best_full_integer_quant_edgetpu.tflite"
+    labels_path = "models/labels.txt"
 
     logger.info(f"📦 TPUモデル読み込み: {model_path}")
 
@@ -444,38 +500,36 @@ if __name__ == '__main__':
         logger.error(f"❌ TPUモデルの読み込み失敗: {e}")
         sys.exit(1)
 
-    # ラベル読み込み
-    logger.info(f"📝 ラベル読み込み: {labels_path}")
-    with open(labels_path, 'r') as f:
-        labels = [line.strip() for line in f.readlines()]
-    logger.info(f"✅ {len(labels)} ラベル読み込み完了")
+    if os.path.exists(labels_path):
+        with open(labels_path, 'r') as f:
+            labels = [line.strip() for line in f.readlines()]
+        logger.info(f"✅ {len(labels)} ラベル読み込み完了")
+    else:
+        labels = ["ball"]
 
-    # カメラ初期化
     logger.info("📷 カメラを初期化中...")
-    camera = CameraController(resolution=(640, 480), framerate=30, debug=True)
+    camera = CameraController(resolution=(640, 480), framerate=30, debug=False)
 
     if not camera.initialize():
-        logger.error("❌ カメラの初期化に失敗しました")
+        logger.error("❌ カメラの初期化に失敗")
         sys.exit(1)
 
     if not camera.start():
-        logger.error("❌ カメラの起動に失敗しました")
+        logger.error("❌ カメラの起動に失敗")
         camera.cleanup()
         sys.exit(1)
 
-    time.sleep(2)  # カメラウォームアップ
+    time.sleep(2)
     logger.info("✅ カメラ初期化完了")
 
-    # バックグラウンドでフレーム処理開始
     processing_thread = Thread(target=process_frames, args=(camera,), daemon=True)
     processing_thread.start()
 
     try:
-        # サーバー起動
         address = ('', 8000)
         server = StreamingServer(address, StreamingHandler)
         logger.info("=" * 70)
-        logger.info("🌐 Edge TPU ボール検出ストリーミングサーバー起動！")
+        logger.info("🌐 最適化版 YOLO TPU ボール検出ストリーミングサーバー起動！")
         logger.info("=" * 70)
         logger.info("ブラウザで以下のURLにアクセスしてください:")
         logger.info("  http://<RaspberryPiのIPアドレス>:8000")

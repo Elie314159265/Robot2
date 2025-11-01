@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-TPUボール検出 カメラストリーミング
-PyCoral + Edge TPUでリアルタイムボール検出
+YOLO形式TPUボール検出 カメラストリーミング
+ファインチューニングされたYOLO形式モデル + Edge TPUでリアルタイムボール検出
 
 使い方:
-  python3 scripts/camera_stream_tpu.py
+  python3 scripts/camera_stream_yolo_tpu.py
   ブラウザで http://<RaspberryPiのIPアドレス>:8000 にアクセス
 """
 
@@ -27,7 +27,6 @@ from src.camera import CameraController
 # PyCoral インポート
 from pycoral.utils import edgetpu
 from pycoral.adapters import common
-from pycoral.adapters import detect
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,6 +54,84 @@ current_fps = 0
 total_detections = 0
 ball_detections = 0
 avg_inference_time = 0
+
+
+# YOLO形式の後処理関数
+def postprocess_yolo_output(output_data, input_shape, conf_threshold=0.5, iou_threshold=0.45):
+    """
+    YOLO形式の出力を後処理して検出結果を取得
+
+    Args:
+        output_data: モデルの出力テンソル [1, 5, 8400] 形式
+                    5 = [x_center, y_center, width, height, class_confidence]
+        input_shape: 入力画像のサイズ (height, width)
+        conf_threshold: 信頼度閾値
+        iou_threshold: NMS用のIoU閾値
+
+    Returns:
+        検出結果のリスト: [{'class': class_id, 'score': score, 'bbox': [xmin, ymin, xmax, ymax]}, ...]
+    """
+    # 出力形式: [1, 5, 8400] -> [8400, 5]に変換
+    predictions = output_data[0].transpose()  # [8400, 5]
+
+    boxes = []
+    scores = []
+    class_ids = []
+
+    h, w = input_shape
+
+    for pred in predictions:
+        x_center, y_center, width, height, confidence = pred
+
+        # 信頼度フィルタリング
+        if confidence < conf_threshold:
+            continue
+
+        # バウンディングボックスを正規化座標に変換（0-1）
+        xmin = (x_center - width / 2) / w
+        ymin = (y_center - height / 2) / h
+        xmax = (x_center + width / 2) / w
+        ymax = (y_center + height / 2) / h
+
+        # 範囲チェック
+        xmin = max(0, min(1, xmin))
+        ymin = max(0, min(1, ymin))
+        xmax = max(0, min(1, xmax))
+        ymax = max(0, min(1, ymax))
+
+        boxes.append([xmin, ymin, xmax, ymax])
+        scores.append(float(confidence))
+        class_ids.append(0)  # ボールクラスのみ（単一クラス）
+
+    if len(boxes) == 0:
+        return []
+
+    # NMS (Non-Maximum Suppression)
+    boxes_np = np.array(boxes)
+    scores_np = np.array(scores)
+
+    # OpenCVのNMSを使用（正規化座標を実座標に変換）
+    boxes_for_nms = boxes_np.copy()
+    boxes_for_nms[:, [0, 2]] *= w
+    boxes_for_nms[:, [1, 3]] *= h
+
+    indices = cv2.dnn.NMSBoxes(
+        boxes_for_nms.tolist(),
+        scores_np.tolist(),
+        conf_threshold,
+        iou_threshold
+    )
+
+    detections = []
+    if len(indices) > 0:
+        for i in indices.flatten():
+            detections.append({
+                'class': class_ids[i],
+                'score': scores[i],
+                'bbox': boxes[i]  # [xmin, ymin, xmax, ymax] 正規化座標
+            })
+
+    return detections
 
 
 # HTTPリクエストハンドラ
@@ -122,7 +199,7 @@ PAGE = """\
 <html>
 <head>
 <meta charset="utf-8">
-<title>⚽ Edge TPU Ball Detection - Live Stream</title>
+<title>⚽ Custom YOLO Ball Detection - Live Stream</title>
 <style>
 body {
     margin: 0;
@@ -133,7 +210,7 @@ body {
     text-align: center;
 }
 h1 {
-    background: linear-gradient(90deg, #4CAF50, #8BC34A);
+    background: linear-gradient(90deg, #FF6B6B, #FF8E53);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     font-size: 2.5em;
@@ -150,7 +227,7 @@ h1 {
 }
 img {
     max-width: 100%;
-    border: 3px solid #4CAF50;
+    border: 3px solid #FF6B6B;
     border-radius: 12px;
     box-shadow: 0 8px 16px rgba(0,0,0,0.4);
 }
@@ -174,14 +251,14 @@ img {
 }
 .stat-item {
     padding: 10px;
-    background: rgba(76, 175, 80, 0.2);
+    background: rgba(255, 107, 107, 0.2);
     border-radius: 5px;
-    border-left: 3px solid #4CAF50;
+    border-left: 3px solid #FF6B6B;
 }
 .stat-value {
     font-size: 1.8em;
     font-weight: bold;
-    color: #4CAF50;
+    color: #FF6B6B;
 }
 .ball-detected {
     color: #FFD700;
@@ -207,37 +284,39 @@ img {
     margin-right: 10px;
     border-radius: 3px;
 }
-.box-other {
-    width: 24px;
-    height: 24px;
-    background-color: rgba(0, 255, 0, 0.3);
-    border: 2px solid lime;
-    margin-right: 10px;
-    border-radius: 3px;
-}
 .tpu-badge {
     display: inline-block;
-    background: linear-gradient(90deg, #4CAF50, #8BC34A);
+    background: linear-gradient(90deg, #FF6B6B, #FF8E53);
     color: white;
     padding: 5px 15px;
     border-radius: 20px;
     font-weight: bold;
     margin: 10px 0;
 }
+.custom-badge {
+    display: inline-block;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    color: white;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-weight: bold;
+    margin: 10px 5px;
+}
 </style>
 </head>
 <body>
 <div class="container">
-<h1>⚽ Edge TPU Ball Detection</h1>
-<div class="subtitle">🚀 リアルタイムボール検出システム</div>
+<h1>⚽ Custom YOLO Ball Detection</h1>
+<div class="subtitle">🚀 カスタムファインチューニング済みモデル</div>
 <div class="tpu-badge">✨ Powered by Google Coral Edge TPU</div>
+<div class="custom-badge">🎯 Fine-tuned YOLO Model</div>
 <img src="stream.mjpg" />
 <div class="info">
     <p><strong>📷 カメラ:</strong> RaspberryPi Camera Module 3 (IMX708)</p>
     <p><strong>🎯 解像度:</strong> 640x480 @ 30fps</p>
-    <p><strong>🧠 検出モデル:</strong> SSD MobileNet v2 COCO (TPU版)</p>
+    <p><strong>🧠 検出モデル:</strong> Custom YOLO (Fine-tuned on Soccer Balls)</p>
     <p><strong>⚡ アクセラレータ:</strong> Google Coral USB Accelerator</p>
-    <p><strong>🎪 ターゲット:</strong> Sports Ball (COCO Class 37)</p>
+    <p><strong>🎪 ターゲット:</strong> Soccer Ball (Custom Dataset)</p>
 
     <div class="stats">
         <div class="stat-item">
@@ -260,8 +339,7 @@ img {
 </div>
 <div class="legend">
     <p><strong>🎨 検出表示:</strong></p>
-    <div class="legend-item"><span class="box-ball"></span> スポーツボール（赤色・太線）</div>
-    <div class="legend-item"><span class="box-other"></span> その他のオブジェクト（緑色）</div>
+    <div class="legend-item"><span class="box-ball"></span> サッカーボール（赤色・太線）</div>
 </div>
 </div>
 
@@ -294,18 +372,16 @@ def update_detection_stats(detections):
     global total_detections, ball_detections
 
     total_detections += len(detections)
-    for det in detections:
-        if det.id == 36:  # sports ball (COCO class 36)
-            ball_detections += 1
+    ball_detections += len(detections)  # YOLOモデルはボールのみ検出
 
 
 def draw_detections(frame, detections):
     """
-    フレームに検出結果を描画（PyCoral形式）
+    フレームに検出結果を描画（YOLO形式）
 
     Args:
         frame: 入力フレーム (RGB)
-        detections: PyCoral検出結果のリスト
+        detections: YOLO検出結果のリスト
 
     Returns:
         描画済みフレーム
@@ -313,27 +389,20 @@ def draw_detections(frame, detections):
     h, w = frame.shape[:2]
 
     for det in detections:
-        # PyCoral BBox形式: det.bbox (BBox object with xmin, ymin, xmax, ymax)
-        bbox = det.bbox
-        score = det.score
-        class_id = det.id
+        bbox = det['bbox']  # [xmin, ymin, xmax, ymax] 正規化座標
+        score = det['score']
+        class_id = det['class']
 
-        # 座標を画像サイズに変換（正規化座標から実座標へ）
-        xmin = int(bbox.xmin * w)
-        ymin = int(bbox.ymin * h)
-        xmax = int(bbox.xmax * w)
-        ymax = int(bbox.ymax * h)
+        # 座標を画像サイズに変換
+        xmin = int(bbox[0] * w)
+        ymin = int(bbox[1] * h)
+        xmax = int(bbox[2] * w)
+        ymax = int(bbox[3] * h)
 
-        # ボール（class 36）は赤、その他は緑
-        if class_id == 36:
-            color = (255, 0, 0)  # 赤 (RGB)
-            label = f"Ball {score:.2f}"
-            thickness = 3
-        else:
-            color = (0, 255, 0)  # 緑
-            label_name = labels[class_id] if class_id < len(labels) else f"ID:{class_id}"
-            label = f"{label_name} {score:.2f}"
-            thickness = 2
+        # ボールは赤
+        color = (255, 0, 0)  # 赤 (RGB)
+        label = f"Ball {score:.2f}"
+        thickness = 3
 
         # バウンディングボックスを描画
         cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), color, thickness)
@@ -372,19 +441,41 @@ def process_frames(camera):
         if detection_enabled and interpreter:
             inference_start = time.time()
 
+            # 入力サイズ取得
+            input_details = interpreter.get_input_details()[0]
+            input_shape = input_details['shape'][1:3]  # [height, width]
+
             # 画像リサイズと前処理
-            input_size = common.input_size(interpreter)
-            resized = np.array(
-                np.resize(frame, (input_size[0], input_size[1], 3)),
-                dtype=np.uint8
-            )
+            resized = cv2.resize(frame, (input_shape[1], input_shape[0]))
+
+            # INT8量子化モデルの場合、入力スケーリングが必要
+            input_scale = input_details['quantization'][0]
+            input_zero_point = input_details['quantization'][1]
+
+            # 正規化してINT8に変換
+            input_data = (resized.astype(np.float32) / input_scale + input_zero_point).astype(np.int8)
+            input_data = np.expand_dims(input_data, axis=0)
 
             # TPU推論
-            common.set_input(interpreter, resized)
+            interpreter.set_tensor(input_details['index'], input_data)
             interpreter.invoke()
 
             # 検出結果取得
-            last_detections = detect.get_objects(interpreter, score_threshold=0.5)
+            output_details = interpreter.get_output_details()[0]
+            output_data = interpreter.get_tensor(output_details['index'])
+
+            # INT8出力を float32に逆量子化
+            output_scale = output_details['quantization'][0]
+            output_zero_point = output_details['quantization'][1]
+            output_data = (output_data.astype(np.float32) - output_zero_point) * output_scale
+
+            # YOLO後処理
+            last_detections = postprocess_yolo_output(
+                output_data,
+                input_shape=(input_shape[0], input_shape[1]),
+                conf_threshold=0.5,
+                iou_threshold=0.45
+            )
 
             inference_time = (time.time() - inference_start) * 1000
             inference_times.append(inference_time)
@@ -426,13 +517,12 @@ def process_frames(camera):
 
 if __name__ == '__main__':
     print("=" * 70)
-    print("🚀 Edge TPU ボール検出 カメラストリーミング")
+    print("🚀 Custom YOLO TPU ボール検出 カメラストリーミング")
     print("=" * 70)
 
     # TPUモデル初期化
-    model_path = "models/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite"
-    #model_path = "models/best_full_integer_quant_edgetpu.tflite"
-    labels_path = "models/coco_labels.txt"
+    model_path = "models/best_full_integer_quant_edgetpu.tflite"
+    labels_path = "models/labels.txt"
 
     logger.info(f"📦 TPUモデル読み込み: {model_path}")
 
@@ -445,10 +535,14 @@ if __name__ == '__main__':
         sys.exit(1)
 
     # ラベル読み込み
-    logger.info(f"📝 ラベル読み込み: {labels_path}")
-    with open(labels_path, 'r') as f:
-        labels = [line.strip() for line in f.readlines()]
-    logger.info(f"✅ {len(labels)} ラベル読み込み完了")
+    if os.path.exists(labels_path):
+        logger.info(f"📝 ラベル読み込み: {labels_path}")
+        with open(labels_path, 'r') as f:
+            labels = [line.strip() for line in f.readlines()]
+        logger.info(f"✅ {len(labels)} ラベル読み込み完了")
+    else:
+        logger.warning(f"⚠️ ラベルファイルが見つかりません: {labels_path}")
+        labels = ["ball"]  # デフォルト
 
     # カメラ初期化
     logger.info("📷 カメラを初期化中...")
@@ -475,7 +569,7 @@ if __name__ == '__main__':
         address = ('', 8000)
         server = StreamingServer(address, StreamingHandler)
         logger.info("=" * 70)
-        logger.info("🌐 Edge TPU ボール検出ストリーミングサーバー起動！")
+        logger.info("🌐 Custom YOLO TPU ボール検出ストリーミングサーバー起動！")
         logger.info("=" * 70)
         logger.info("ブラウザで以下のURLにアクセスしてください:")
         logger.info("  http://<RaspberryPiのIPアドレス>:8000")

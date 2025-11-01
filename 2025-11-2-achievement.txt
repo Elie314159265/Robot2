@@ -1,0 +1,358 @@
+# 2025-11-02 成果レポート: TPUボール検出の完全解決
+
+## 🎯 達成目標
+ラズパイCPUで成功していたボール検出を、Google Coral Edge TPUで動作させる
+
+## ✅ 最終結果：完全成功！
+
+- **ボール検出**: ✅ 成功（リアルタイム追跡可能）
+- **FPS**: 28-30（実用レベル）
+- **推論時間**: 約29ms
+- **検出精度**: 良好（クラスID修正により正常動作）
+- **描画精度**: ✅ 正確な位置に赤枠表示
+
+---
+
+## 🔍 発見された3つの重大な問題
+
+### 問題1: 間違ったクラスID（最重要）⚠️
+
+#### 症状
+- TPUは正常に動作し、ボールを80%以上の信頼度で検出
+- しかし、画面には何も表示されず、統計情報も増えない
+
+#### 根本原因
+すべてのスクリプトで**間違ったクラスID**を使用：
+
+```python
+# ❌ 間違ったコード（すべてのスクリプト）
+if det.id == 37:  # これは "kite"（凧）
+    ball_detections += 1
+```
+
+#### 真実
+COCOデータセットのラベルファイル（models/coco_labels.txt）を確認：
+
+```
+Line 33: suitcase
+Line 34: frisbee
+Line 35: skis
+Line 36: snowboard
+Line 37: sports ball  ← ファイルの37行目
+Line 38: kite         ← ファイルの38行目
+```
+
+**重要な発見**: ファイルの行番号とPythonの配列インデックスは異なる！
+- ファイルの37行目 = Pythonのインデックス36（0始まり）
+- ファイルの38行目 = Pythonのインデックス37
+
+#### 正しい修正
+```python
+# ✅ 正しいコード
+if det.id == 36:  # これが "sports ball"
+    ball_detections += 1
+```
+
+#### 証拠
+`investigate_detection_issue.py`で検証：
+```
+Class 36: sports ball
+Score: 0.8047 (80.5%)
+BBox: xmin=168, ymin=82, xmax=267, ymax=218
+
+→ TPUは正しくボールを検出していた！
+```
+
+#### 影響範囲
+修正したファイル：
+- `scripts/camera_stream_tpu.py`
+- `scripts/camera_stream_tpu_improved.py` ⭐ 推奨版
+- `scripts/camera_stream_with_detection.py`
+
+---
+
+### 問題2: BBox座標のスケーリング誤り 📏
+
+#### 症状
+- クラスID修正後、枠は表示されるようになった
+- **しかし位置がずれる**（ボールが右側にあるのに枠は中央など）
+
+#### 根本原因
+PyCoral のBBox座標は**モデルの入力サイズ（300x300）に対する座標**：
+```python
+bbox = BBox(xmin=29, ymin=0, xmax=298, ymax=241)
+# これは300x300の画像における座標
+```
+
+しかし、コードでは**元の画像サイズ（640x480）に直接描画**：
+```python
+# ❌ 間違ったコード
+xmin = int(bbox.xmin)  # 29を640x480画像にそのまま描画
+xmax = int(bbox.xmax)  # 298を640x480画像にそのまま描画
+```
+
+#### 正しい修正
+モデルサイズから元画像サイズへスケーリング：
+
+```python
+# ✅ 正しいコード
+# スケーリング係数を計算
+scale_x = 640 / 300  # = 2.13
+scale_y = 480 / 300  # = 1.60
+
+# 座標をスケーリング
+xmin = int(bbox.xmin * scale_x)  # 29 × 2.13 = 62
+xmax = int(bbox.xmax * scale_x)  # 298 × 2.13 = 635
+ymin = int(bbox.ymin * scale_y)
+ymax = int(bbox.ymax * scale_y)
+```
+
+#### デバッグログ
+```
+フレームサイズ=640x480, モデルサイズ=300x300
+スケーリング係数: scale_x=2.13, scale_y=1.60
+```
+
+#### 結果
+✅ **枠が物体の正確な位置に表示されるようになった！**
+
+---
+
+### 問題3: 画像リサイズの誤用（精度低下の原因）🖼️
+
+#### 症状（camera_stream_tpu.pyのみ）
+検出率が低下する可能性
+
+#### 根本原因
+```python
+# ❌ 完全に誤った実装（camera_stream_tpu.py 377-380行目）
+resized = np.array(
+    np.resize(frame, (input_size[0], input_size[1], 3)),
+    dtype=np.uint8
+)
+```
+
+#### なぜダメなのか
+- `np.resize()` は**配列のリサイズ**用（画像用ではない）
+- 補間処理を行わず、データを繰り返しor切り捨て
+- 画像が破壊され、検出精度が大幅に低下
+
+#### 正しい方法
+```python
+# ✅ 推奨: PIL + LANCZOS補間（camera_stream_tpu_improved.py）
+from PIL import Image
+
+def resize_with_pil(image_rgb, target_size):
+    pil_image = Image.fromarray(image_rgb)
+    pil_image = pil_image.resize(target_size, Image.Resampling.LANCZOS)
+    return np.array(pil_image)
+```
+
+#### リサイズ方法の比較
+
+| 方法 | 品質 | 速度 | 精度への影響 |
+|------|------|------|------------|
+| **PIL + LANCZOS** ⭐ | 最高 | 中 | 最良 |
+| cv2.resize + INTER_LANCZOS4 | 高 | 中 | 良 |
+| cv2.resize + INTER_LINEAR | 中 | 高 | 普通 |
+| **np.resize()** ❌ | **破壊的** | - | **使用禁止** |
+
+#### 公式推奨
+Google Coral公式ドキュメントより：
+- Edge TPUは`uint8`形式の入力が必要
+- 推奨リサイズ: PIL + LANCZOSまたは`cv2.resize()`
+- **np.resize()は絶対に使用しないこと**
+
+---
+
+## 🛠️ 技術的詳細
+
+### Google Coral Edge TPU仕様
+- **デバイス**: Google Coral USB Accelerator
+- **ライブラリ**: PyCoral
+- **推論時間**: 約10-30ms（モデルサイズによる）
+- **入力形式**: uint8 (0-255)
+
+### 使用モデル: SSD MobileNet v2 COCO
+```
+ファイル: ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite
+入力サイズ: 300x300x3 (RGB, uint8)
+出力形式: 4テンソル (boxes, classes, scores, count)
+クラス数: 90
+ターゲット: Class 36 (sports ball)
+```
+
+### PyCoral BBox仕様
+- 形式: `BBox(xmin, ymin, xmax, ymax)`
+- 座標系: **モデル入力サイズに対するピクセル座標**
+- 例: 300x300モデルの場合、0-300の範囲
+
+### 実装の正しいフロー
+```
+1. カメラからフレーム取得（640x480, RGB）
+2. PIL + LANCZOSで300x300にリサイズ
+3. TPU推論実行
+4. BBox座標取得（300x300座標系）
+5. スケーリング係数計算（640/300, 480/300）
+6. 座標を元画像サイズにスケーリング
+7. 640x480フレームに描画
+8. JPEG圧縮してストリーミング
+```
+
+---
+
+## 📊 パフォーマンス結果
+
+### 最終スペック（camera_stream_tpu_improved.py）
+```
+FPS: 28-30
+推論時間: 29ms
+ボール検出率: 高（80%以上の信頼度）
+位置精度: 正確（スケーリング修正後）
+```
+
+### 統計情報の例
+```json
+{
+    "fps": 28.0,
+    "total_detections": 4816,
+    "ball_detections": 264,
+    "inference_time": 29.4
+}
+```
+
+---
+
+## 📝 修正されたファイル一覧
+
+### 主要スクリプト
+1. **camera_stream_tpu_improved.py** ⭐ **推奨版**
+   - クラスID: 36に修正 ✅
+   - リサイズ: PIL + LANCZOS（高品質）✅
+   - BBoxスケーリング: 正しく実装 ✅
+   - **→ このスクリプトを使用すること！**
+
+2. **camera_stream_tpu.py**
+   - クラスID: 36に修正 ✅
+   - リサイズ: np.resize()（要修正）⚠️
+   - BBoxスケーリング: 未実装 ❌
+   - **→ 非推奨（improved版を使用）**
+
+### Git状態
+```bash
+M  scripts/camera_stream_tpu.py
+M  scripts/camera_stream_tpu_improved.py
+?? 2025-11-2-achievement.txt
+```
+
+---
+
+## 🎓 重要な教訓
+
+### 1. クラスIDの確認は必須
+- **ファイルの行番号 ≠ 配列インデックス**
+- COCOラベル: 1行目から始まる → Pythonインデックス: 0から始まる
+- 必ず公式ラベルファイルを確認すること
+
+### 2. 座標系の理解が重要
+- モデルの入力サイズと表示画像サイズは異なる
+- BBox座標は必ずスケーリングが必要
+- デバッグログで座標を確認すること
+
+### 3. 画像処理の基礎知識
+- `np.resize()` は配列リサイズ用（画像用ではない）
+- PIL + LANCZOSが最高品質
+- Google公式ドキュメントの推奨方法に従う
+
+### 4. デバッグの重要性
+- 統計情報（/stats）でまず検出の有無を確認
+- ログ出力で座標値を検証
+- 段階的にデバッグ情報を追加
+
+---
+
+## 🚀 今後の推奨事項
+
+### 1. 本番運用
+```bash
+# 推奨スクリプトで起動
+python3 scripts/camera_stream_tpu_improved.py
+
+# アクセス
+http://192.168.0.11:8000
+```
+
+### 2. デバッグログの削除（オプション）
+本番運用時は以下のデバッグコードを削除して軽量化：
+- 435-436行目: 検出数ログ
+- 327-343行目: draw_detectionsのデバッグログ
+
+### 3. パフォーマンス最適化（必要に応じて）
+- 検出頻度の調整（毎フレーム → N フレームに1回）
+- 信頼度閾値の調整（現在0.5）
+- JPEG品質の調整（現在90）
+
+### 4. 他のスクリプトの修正
+以下のスクリプトも同様の問題がある可能性：
+```bash
+scripts/camera_stream_yolo_tpu.py
+scripts/camera_stream_yolo_optimized.py
+scripts/investigate_detection_issue.py
+```
+
+クラスIDとBBoxスケーリングを確認・修正すること
+
+---
+
+## 📚 参考リソース
+
+### Google Coral公式
+- GitHub: https://github.com/google-coral/
+- PyCoral API: https://coral.ai/docs/reference/
+- モデル一覧: https://coral.ai/models/
+
+### COCOデータセット
+- 公式サイト: https://cocodataset.org/
+- クラス一覧: https://tech.amikelive.com/node-718/
+
+### プロジェクト内ドキュメント
+- 調査ログ: `2025-11-2-changes.txt`
+- プロジェクト設計: `CLAUDE.md`
+- 詳細設計: `blueprint.txt`
+
+---
+
+## 🎉 成果サマリー
+
+### 解決した問題
+1. ✅ クラスID誤り（37 → 36）
+2. ✅ BBox座標スケーリング（300x300 → 640x480）
+3. ✅ 画像リサイズ方法（np.resize → PIL+LANCZOS）
+
+### 最終状態
+- **ボール追跡**: ✅ リアルタイムで正確に追跡
+- **赤枠表示**: ✅ 正しい位置に表示
+- **FPS**: 28-30（実用レベル）
+- **検出精度**: 良好（80%以上）
+
+### 次のフェーズへ
+Phase 2（TPU動作確認）完了 → **Phase 3（Arduino連携）へ進行可能！**
+
+---
+
+## 🙏 謝辞
+
+この問題の解決には以下が鍵となりました：
+1. 詳細な調査ログ（2025-11-2-changes.txt）
+2. investigate_detection_issue.pyによる徹底検証
+3. Google Coral公式ドキュメント
+4. 段階的なデバッグアプローチ
+
+---
+
+作成日: 2025-11-02
+プロジェクト: 4足歩行ゴールキーパーロボット
+フェーズ: Phase 2 完了
+ステータス: ✅ 成功
+
+次のステップ: Phase 3（Arduino連携、サーボ制御、超音波センサ）

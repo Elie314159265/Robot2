@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-TPUボール検出 カメラストリーミング
-PyCoral + Edge TPUでリアルタイムボール検出
+改善版 TPUボール検出 カメラストリーミング
+PIL + LANCZOS補間で高精度リサイズを実現
 
 使い方:
-  python3 scripts/camera_stream_tpu.py
+  python3 scripts/camera_stream_tpu_improved.py
   ブラウザで http://<RaspberryPiのIPアドレス>:8000 にアクセス
 """
 
@@ -17,6 +17,7 @@ from threading import Condition, Thread
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import cv2
 import numpy as np
+from PIL import Image
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
@@ -122,7 +123,7 @@ PAGE = """\
 <html>
 <head>
 <meta charset="utf-8">
-<title>⚽ Edge TPU Ball Detection - Live Stream</title>
+<title>⚽ Improved Edge TPU Ball Detection</title>
 <style>
 body {
     margin: 0;
@@ -224,20 +225,31 @@ img {
     font-weight: bold;
     margin: 10px 0;
 }
+.improved-badge {
+    display: inline-block;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    color: white;
+    padding: 5px 15px;
+    border-radius: 20px;
+    font-weight: bold;
+    margin: 10px 5px;
+}
 </style>
 </head>
 <body>
 <div class="container">
-<h1>⚽ Edge TPU Ball Detection</h1>
-<div class="subtitle">🚀 リアルタイムボール検出システム</div>
+<h1>⚽ Improved Edge TPU Ball Detection</h1>
+<div class="subtitle">🚀 PIL + LANCZOS補間による高精度検出</div>
 <div class="tpu-badge">✨ Powered by Google Coral Edge TPU</div>
+<div class="improved-badge">🎯 High Quality Resize</div>
 <img src="stream.mjpg" />
 <div class="info">
     <p><strong>📷 カメラ:</strong> RaspberryPi Camera Module 3 (IMX708)</p>
     <p><strong>🎯 解像度:</strong> 640x480 @ 30fps</p>
     <p><strong>🧠 検出モデル:</strong> SSD MobileNet v2 COCO (TPU版)</p>
     <p><strong>⚡ アクセラレータ:</strong> Google Coral USB Accelerator</p>
-    <p><strong>🎪 ターゲット:</strong> Sports Ball (COCO Class 37)</p>
+    <p><strong>🎪 ターゲット:</strong> Sports Ball (COCO Class 36)</p>
+    <p><strong>🔧 改善点:</strong> PIL + LANCZOS高品質補間</p>
 
     <div class="stats">
         <div class="stat-item">
@@ -312,17 +324,35 @@ def draw_detections(frame, detections):
     """
     h, w = frame.shape[:2]
 
+    # モデルの入力サイズを取得（BBoxはこのサイズに対する座標）
+    input_size = common.input_size(interpreter)  # (height, width)
+    model_h, model_w = input_size[0], input_size[1]
+
+    # スケーリング係数を計算
+    scale_x = w / model_w
+    scale_y = h / model_h
+
+    # デバッグ: 1回だけ詳細を出力
+    global _debug_draw_done
+    if not '_debug_draw_done' in globals():
+        _debug_draw_done = True
+        logger.info(f"draw_detections呼び出し: フレームサイズ={w}x{h}, モデルサイズ={model_w}x{model_h}")
+        logger.info(f"  スケーリング係数: scale_x={scale_x:.2f}, scale_y={scale_y:.2f}")
+        if detections:
+            det = detections[0]
+            logger.info(f"  最初の検出: class_id={det.id}, score={det.score:.2f}, bbox={det.bbox}")
+
     for det in detections:
         # PyCoral BBox形式: det.bbox (BBox object with xmin, ymin, xmax, ymax)
         bbox = det.bbox
         score = det.score
         class_id = det.id
 
-        # 座標を画像サイズに変換（正規化座標から実座標へ）
-        xmin = int(bbox.xmin * w)
-        ymin = int(bbox.ymin * h)
-        xmax = int(bbox.xmax * w)
-        ymax = int(bbox.ymax * h)
+        # BBoxをモデルサイズから元の画像サイズにスケーリング
+        xmin = int(bbox.xmin * scale_x)
+        ymin = int(bbox.ymin * scale_y)
+        xmax = int(bbox.xmax * scale_x)
+        ymax = int(bbox.ymax * scale_y)
 
         # ボール（class 36）は赤、その他は緑
         if class_id == 36:
@@ -349,6 +379,22 @@ def draw_detections(frame, detections):
     return frame
 
 
+def resize_with_pil(image_rgb, target_size):
+    """
+    PIL + LANCZOS補間で高品質リサイズ
+
+    Args:
+        image_rgb: RGB numpy array (H x W x 3)
+        target_size: (width, height) タプル
+
+    Returns:
+        リサイズされたRGB numpy array
+    """
+    pil_image = Image.fromarray(image_rgb)
+    pil_image = pil_image.resize(target_size, Image.Resampling.LANCZOS)
+    return np.array(pil_image)
+
+
 def process_frames(camera):
     """
     フレームを処理し、TPUで検出してストリーミング
@@ -372,12 +418,16 @@ def process_frames(camera):
         if detection_enabled and interpreter:
             inference_start = time.time()
 
-            # 画像リサイズと前処理
-            input_size = common.input_size(interpreter)
-            resized = np.array(
-                np.resize(frame, (input_size[0], input_size[1], 3)),
-                dtype=np.uint8
-            )
+            # 画像リサイズと前処理（PIL + LANCZOS補間）
+            input_size = common.input_size(interpreter)  # (height, width)
+
+            # PIL + LANCZOS補間で高品質リサイズ
+            # PIL.resize expects (width, height), so swap input_size
+            resized = resize_with_pil(frame, (input_size[1], input_size[0]))  # (width, height)
+
+            # uint8型確保
+            if resized.dtype != np.uint8:
+                resized = resized.astype(np.uint8)
 
             # TPU推論
             common.set_input(interpreter, resized)
@@ -399,6 +449,9 @@ def process_frames(camera):
 
         # 検出結果を描画
         if last_detections:
+            # デバッグ: 検出数をログ出力
+            if frame_count % 30 == 0:  # 30フレームに1回
+                logger.info(f"検出数: {len(last_detections)}, ボール検出累積: {ball_detections}")
             frame = draw_detections(frame, last_detections)
 
         # FPS計算
@@ -426,12 +479,11 @@ def process_frames(camera):
 
 if __name__ == '__main__':
     print("=" * 70)
-    print("🚀 Edge TPU ボール検出 カメラストリーミング")
+    print("🚀 改善版 Edge TPU ボール検出 カメラストリーミング")
     print("=" * 70)
 
     # TPUモデル初期化
     model_path = "models/ssd_mobilenet_v2_coco_quant_postprocess_edgetpu.tflite"
-    #model_path = "models/best_full_integer_quant_edgetpu.tflite"
     labels_path = "models/coco_labels.txt"
 
     logger.info(f"📦 TPUモデル読み込み: {model_path}")
@@ -452,7 +504,7 @@ if __name__ == '__main__':
 
     # カメラ初期化
     logger.info("📷 カメラを初期化中...")
-    camera = CameraController(resolution=(640, 480), framerate=30, debug=True)
+    camera = CameraController(resolution=(640, 480), framerate=30, debug=False)
 
     if not camera.initialize():
         logger.error("❌ カメラの初期化に失敗しました")
@@ -475,10 +527,14 @@ if __name__ == '__main__':
         address = ('', 8000)
         server = StreamingServer(address, StreamingHandler)
         logger.info("=" * 70)
-        logger.info("🌐 Edge TPU ボール検出ストリーミングサーバー起動！")
+        logger.info("🌐 改善版 Edge TPU ボール検出ストリーミングサーバー起動！")
         logger.info("=" * 70)
         logger.info("ブラウザで以下のURLにアクセスしてください:")
         logger.info("  http://<RaspberryPiのIPアドレス>:8000")
+        logger.info("=" * 70)
+        logger.info("改善点:")
+        logger.info("  - PIL + LANCZOS補間による高品質リサイズ")
+        logger.info("  - エッジが鮮明で検出精度が向上")
         logger.info("=" * 70)
         logger.info("終了するには Ctrl+C を押してください")
         logger.info("=" * 70)
