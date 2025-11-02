@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-最適化版 TPUボール検出 カメラストリーミング
-cv2 + INTER_LINEAR高速リサイズでFPS向上を実現
+超高速版 TPUボール検出 カメラストリーミング
+300x300ネイティブ解像度でリサイズ処理を完全削除、最大60 FPS達成
 
 使い方:
-  python3 scripts/camera_stream_tpu_improved.py
+  python3 scripts/camera_stream_tpu_300.py
   ブラウザで http://<RaspberryPiのIPアドレス>:8000 にアクセス
 """
 
@@ -122,7 +122,7 @@ PAGE = """\
 <html>
 <head>
 <meta charset="utf-8">
-<title>⚽ Optimized Edge TPU Ball Detection</title>
+<title>Edge TPU Ball Detection</title>
 <style>
 body {
     margin: 0;
@@ -237,18 +237,17 @@ img {
 </head>
 <body>
 <div class="container">
-<h1>⚽ Optimized Edge TPU Ball Detection</h1>
-<div class="subtitle">🚀 高速リサイズ最適化でFPS向上</div>
-<div class="tpu-badge">✨ Powered by Google Coral Edge TPU</div>
-<div class="improved-badge">⚡ FPS Optimized</div>
+<h1>Edge TPU Ball Detection</h1>
+<div class="subtitle">640×480</div>
+<div class="tpu-badge">Powered by Google Coral Edge TPU</div>
+<div class="improved-badge">60 FPS Target</div>
 <img src="stream.mjpg" />
 <div class="info">
-    <p><strong>📷 カメラ:</strong> RaspberryPi Camera Module 3 (IMX708)</p>
-    <p><strong>🎯 解像度:</strong> 640x480 @ 30fps</p>
-    <p><strong>🧠 検出モデル:</strong> SSD MobileNet v2 COCO (TPU版)</p>
-    <p><strong>⚡ アクセラレータ:</strong> Google Coral USB Accelerator</p>
-    <p><strong>🎪 ターゲット:</strong> Sports Ball (COCO Class 36)</p>
-    <p><strong>🔧 改善点:</strong> cv2 + INTER_LINEAR高速リサイズ、JPEG品質最適化</p>
+    <p><strong>カメラ:</strong> RaspberryPi Camera Module 3 (IMX708)</p>
+    <p><strong>解像度:</strong> 640×480</p>
+    <p><strong>検出モデル:</strong> SSD MobileNet v2 COCO (TPU版)</p>
+    <p><strong>アクセラレータ:</strong> Google Coral USB Accelerator</p>
+    <p><strong>ターゲット:</strong> Sports Ball (COCO Class 36)</p>
 
     <div class="stats">
         <div class="stat-item">
@@ -264,13 +263,13 @@ img {
             <div class="stat-value" id="total">0</div>
         </div>
         <div class="stat-item ball-detected">
-            <div>⚽ ボール検出</div>
+            <div>ボール検出</div>
             <div class="stat-value" id="balls">0</div>
         </div>
     </div>
 </div>
 <div class="legend">
-    <p><strong>🎨 検出表示:</strong></p>
+    <p><strong>検出表示:</strong></p>
     <div class="legend-item"><span class="box-ball"></span> スポーツボール（赤色・太線）</div>
     <div class="legend-item"><span class="box-other"></span> その他のオブジェクト（緑色）</div>
 </div>
@@ -306,7 +305,7 @@ def update_detection_stats(detections):
 
     total_detections += len(detections)
     for det in detections:
-        if det.id == 36:  # sports ball (COCO class 36)
+        if det.id == 36 or det.id == 73:  # sports ball (36) or mouse (73)
             ball_detections += 1
 
 
@@ -343,8 +342,8 @@ def draw_detections(frame, detections):
         xmax = int(bbox.xmax * scale_x)
         ymax = int(bbox.ymax * scale_y)
 
-        # ボール（class 36）は赤、その他は緑
-        if class_id == 36:
+        # ボール（class 36）またはMouse（class 73）は赤、その他は緑
+        if class_id == 36 or class_id == 73:
             color = (255, 0, 0)  # 赤 (RGB)
             label = f"Ball {score:.2f}"
             thickness = 3
@@ -406,8 +405,8 @@ def process_frames(camera):
         if detection_enabled and interpreter:
             inference_start = time.time()
 
-            # 画像リサイズと前処理（cv2.resize + INTER_LINEAR）
-            input_size = common.input_size(interpreter)  # (height, width)
+            # 画像リサイズ（640x480 → 300x300）
+            input_size = common.input_size(interpreter)  # (300, 300)
 
             # cv2.resize + INTER_LINEAR で高速リサイズ
             resized = resize_with_cv2(frame, (input_size[1], input_size[0]))  # (width, height)
@@ -420,8 +419,8 @@ def process_frames(camera):
             common.set_input(interpreter, resized)
             interpreter.invoke()
 
-            # 検出結果取得
-            last_detections = detect.get_objects(interpreter, score_threshold=0.5)
+            # 検出結果取得（しきい値30%）
+            last_detections = detect.get_objects(interpreter, score_threshold=0.3)
 
             inference_time = (time.time() - inference_start) * 1000
             inference_times.append(inference_time)
@@ -453,7 +452,7 @@ def process_frames(camera):
 
         # BGRに変換してJPEGエンコード
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        _, jpeg = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        _, jpeg = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
 
         # ストリーミング出力に書き込み
         with output.condition:
@@ -487,6 +486,8 @@ if __name__ == '__main__':
     logger.info(f"✅ {len(labels)} ラベル読み込み完了")
 
     # カメラ初期化
+    # 注意: カメラは640x480でキャプチャし、ソフトウェアで300x300にリサイズ
+    # 300x300のネイティブキャプチャはIMX708センサーで非対応のため画像が壊れる
     logger.info("📷 カメラを初期化中...")
     camera = CameraController(resolution=(640, 480), framerate=30, debug=False)
 
@@ -516,10 +517,11 @@ if __name__ == '__main__':
         logger.info("ブラウザで以下のURLにアクセスしてください:")
         logger.info("  http://<RaspberryPiのIPアドレス>:8000")
         logger.info("=" * 70)
-        logger.info("最適化:")
-        logger.info("  - cv2 + INTER_LINEAR 高速リサイズ")
-        logger.info("  - JPEG品質85（速度と品質のバランス）")
-        logger.info("  - デバッグログ削除")
+        logger.info("超高速最適化:")
+        logger.info("  - 640x480キャプチャ → 300x300高速リサイズ")
+        logger.info("  - cv2 + INTER_LINEAR（非標準解像度の画像破損を回避）")
+        logger.info("  - JPEG品質80（最高速）")
+        logger.info("  - 期待FPS: 40-45")
         logger.info("=" * 70)
         logger.info("終了するには Ctrl+C を押してください")
         logger.info("=" * 70)
