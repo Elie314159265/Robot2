@@ -61,8 +61,39 @@ class PIDController:
         Returns:
             Control output (servo angle adjustment)
         """
-        # Placeholder - implementation pending
-        return 0.0
+        # Calculate time delta
+        now = datetime.now()
+        dt = (now - self.last_time).total_seconds()
+
+        if dt <= 0:
+            dt = 0.01  # Prevent division by zero
+
+        # Proportional term
+        p_term = self.kp * error
+
+        # Integral term (with anti-windup)
+        self.integral += error * dt
+        # Limit integral to prevent windup
+        integral_limit = 100.0
+        self.integral = max(-integral_limit, min(integral_limit, self.integral))
+        i_term = self.ki * self.integral
+
+        # Derivative term
+        d_term = self.kd * (error - self.last_error) / dt
+
+        # Calculate output
+        output = p_term + i_term + d_term
+
+        # Clamp output to servo limits
+        output = max(self.servo_min, min(self.servo_max, output))
+
+        # Update state
+        self.last_error = error
+        self.last_time = now
+
+        logger.debug(f"PID: error={error:.2f}, P={p_term:.2f}, I={i_term:.2f}, D={d_term:.2f}, output={output:.2f}")
+
+        return output
 
     def reset(self) -> None:
         """Reset PID state"""

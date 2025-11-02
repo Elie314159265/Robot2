@@ -154,21 +154,22 @@ class SerialController:
             logger.error(f"Failed to read distance: {e}")
             return None
 
-    def set_pan_tilt(self, pan_angle: float, tilt_angle: float) -> bool:
+    def set_pan_tilt(self, pan_angle: float, tilt_angle: float = None) -> bool:
         """
         Set pan/tilt servos (convenience method for camera tracking).
+        Note: Currently only pan (servo 0) is used for 1-axis tracking.
 
         Args:
             pan_angle: Pan angle in degrees (0-180)
-            tilt_angle: Tilt angle in degrees (0-180)
+            tilt_angle: Tilt angle in degrees (0-180) - currently unused
 
         Returns:
-            True if both servos set successfully
+            True if servo set successfully
         """
-        # Servo 0: Pan, Servo 1: Tilt
+        # Servo 0: Pan (horizontal rotation)
+        # Note: Tilt is not used in current 1-axis setup
         pan_ok = self.send_servo_command(0, pan_angle)
-        tilt_ok = self.send_servo_command(1, tilt_angle)
-        return pan_ok and tilt_ok
+        return pan_ok
 
     def cleanup(self) -> None:
         """Clean up serial connection"""
