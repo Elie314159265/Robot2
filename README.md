@@ -102,10 +102,10 @@ python3 src/main.py --phase 1
 | Phase | Task | Status |
 |-------|------|--------|
 | 1 | Camera setup (30fps @ 640x480) | ✅ Done |
-| 2 | TPU setup & ball detection | ⏳ In Progress |
-| 3 | Arduino integration | ⏳ Pending |
-| 4 | Real-time detection | ⏳ Pending |
-| 5 | PID tracking control | ⏳ Pending |
+| 2 | TPU setup & ball detection | ✅ Done |
+| 3 | Arduino integration | ✅ Done |
+| 4 | Real-time detection | ✅ Done |
+| 5 | PID tracking control | In progress |
 | 6 | 2D position mapping | ⏳ Pending |
 | 7 | Trajectory prediction | ⏳ Pending |
 | 8+ | Integration testing | ⏳ Pending |
