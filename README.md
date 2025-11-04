@@ -1,30 +1,29 @@
 # Robot PK - 4-legged Goalkeeper Robot
 
-A RaspberryPi-based autonomous goalkeeper robot that detects and blocks incoming soccer balls using AI and computer vision.
+A RaspberryPi-based autonomous goalkeeper robot that detects and blocks incoming soccer balls using ML(SSD MobileNet) and RaspberryPi Camera Module3.
 
 ## Project Overview
 
 **Challenge**: Build a 4-legged crab-type robot that:
 - Walks and rotates
 - Climbs 3cm steps
-- Detects incoming soccer balls using AI
+- Detects incoming soccer balls using ML
 - Tracks and blocks the ball in real-time
 
 ## Hardware Architecture
 
 ### Main Components
-- **RaspberryPi 4** (8GB, Ubuntu OS) - Camera processing and TPU inference
+- **RaspberryPi 4** (8GB, RaspberryPi OS 64bit) - Camera processing and TPU inference
 - **Arduino Uno** - Servo and sensor control
 - **RaspberryPi Camera Module 3** - Video input
-- **Google Coral Edge TPU** - AI acceleration
+- **Google Coral Edge TPU** - ML acceleration
 - **PCA9685 Servo Driver** - 16-servo control
 - **HC-SR04 Ultrasonic Sensor** - Distance measurement
-- **DC Motors** - Walking mechanism
 
 ### Communication
 ```
 RaspberryPi ←→ Arduino (Serial @ 9600 baud)
-  ↓                        ↓
+  ↓    　↑               ↓
 Camera + TPU        Servo + Sensor Control
 ```
 
@@ -114,23 +113,23 @@ python3 src/main.py --phase 1
 
 ### Phase 1: Camera Control ✅
 - Initialize RaspberryPi Camera Module 3
-- Capture frames at 30 FPS
+- Capture frames at 20 FPS
 - 640x480 resolution
 - Real-time performance monitoring
 
-### Phase 2: Object Detection (In Progress)
-- COCO pre-trained model for "sports ball" detection
+### Phase 2: Object Detection ✅
+- COCO pre-trained model(SSD MobileNet) for "sports ball" detection
 - Target accuracy: ≥80%
 - Edge TPU acceleration for real-time inference
 - <20ms inference time target
 
-### Phase 3: Arduino Integration (Pending)
+### Phase 3: Arduino Integration ✅
 - Serial communication (9600 baud, <10ms latency)
 - 16 servo motor control via PCA9685
 - Ultrasonic distance sensor reading
-- DC motor control for walking
+- Servo motor control for walking
 
-### Phase 4-5: Ball Tracking (Pending)
+### Phase 4-5: Ball Tracking (In progress)
 - PID controller for servo positioning
 - Real-time ball following
 - Camera-based target acquisition
