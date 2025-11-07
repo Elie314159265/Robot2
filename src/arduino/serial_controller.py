@@ -123,9 +123,12 @@ class SerialController:
             logger.error(f"Failed to send servo command: {e}")
             return False
 
-    def read_distance(self) -> Optional[float]:
+    def read_distance(self, side: str = "L") -> Optional[float]:
         """
         Read ultrasonic distance sensor.
+
+        Args:
+            side: 'L' for left sensor (pins 8,9) or 'R' for right sensor (pins 10,11)
 
         Returns:
             Distance in cm or None on error
@@ -134,9 +137,14 @@ class SerialController:
             logger.error("Not connected to Arduino")
             return None
 
+        if side not in ["L", "R"]:
+            logger.error(f"Invalid side: {side}. Must be 'L' or 'R'")
+            return None
+
         try:
-            # Send distance read command
-            self.serial.write(b"D\n")
+            # Send distance read command: DL or DR
+            command = f"D{side}\n"
+            self.serial.write(command.encode())
 
             # Read response: D[VALUE:5] (in mm)
             response = self.serial.readline().decode().strip()
@@ -144,7 +152,7 @@ class SerialController:
             if response.startswith("D") and len(response) == 6:
                 distance_mm = int(response[1:])
                 distance_cm = distance_mm / 10.0
-                logger.debug(f"Distance: {distance_cm:.1f} cm")
+                logger.debug(f"Distance ({side}): {distance_cm:.1f} cm")
                 return distance_cm
             else:
                 logger.error(f"Invalid distance response: {response}")
@@ -154,10 +162,28 @@ class SerialController:
             logger.error(f"Failed to read distance: {e}")
             return None
 
+    def read_distance_left(self) -> Optional[float]:
+        """
+        Read left ultrasonic distance sensor (pins 8,9).
+
+        Returns:
+            Distance in cm or None on error
+        """
+        return self.read_distance("L")
+
+    def read_distance_right(self) -> Optional[float]:
+        """
+        Read right ultrasonic distance sensor (pins 10,11).
+
+        Returns:
+            Distance in cm or None on error
+        """
+        return self.read_distance("R")
+
     def set_pan_tilt(self, pan_angle: float, tilt_angle: float = None) -> bool:
         """
         Set pan/tilt servos (convenience method for camera tracking).
-        Note: Currently only pan (servo 0) is used for 1-axis tracking.
+        Note: Currently only pan (servo 9) is used for 1-axis tracking.
 
         Args:
             pan_angle: Pan angle in degrees (0-180)
@@ -168,8 +194,68 @@ class SerialController:
         """
         # Servo 0: Pan (horizontal rotation)
         # Note: Tilt is not used in current 1-axis setup
-        pan_ok = self.send_servo_command(0, pan_angle)
+        pan_ok = self.send_servo_command(9, pan_angle)
         return pan_ok
+
+    def block_ball_left(self) -> bool:
+        """
+        ボールが画面左側に現れた場合、右後脚(7番)を上げてブロック
+
+        Returns:
+            True if successful
+        """
+        if not self.is_connected:
+            logger.error("Not connected to Arduino")
+            return False
+
+        try:
+            # Send block left command: BL
+            command = "BL\n"
+            self.serial.write(command.encode())
+
+            # Read response (5秒間待機するため時間がかかる)
+            response = self.serial.readline().decode().strip()
+
+            if response == "OK":
+                logger.info("Ball blocked on left side (leg 7 raised)")
+                return True
+            else:
+                logger.error(f"Block left command failed: {response}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to send block left command: {e}")
+            return False
+
+    def block_ball_right(self) -> bool:
+        """
+        ボールが画面右側に現れた場合、左後脚(5番)を上げてブロック
+
+        Returns:
+            True if successful
+        """
+        if not self.is_connected:
+            logger.error("Not connected to Arduino")
+            return False
+
+        try:
+            # Send block right command: BR
+            command = "BR\n"
+            self.serial.write(command.encode())
+
+            # Read response (5秒間待機するため時間がかかる)
+            response = self.serial.readline().decode().strip()
+
+            if response == "OK":
+                logger.info("Ball blocked on right side (leg 5 raised)")
+                return True
+            else:
+                logger.error(f"Block right command failed: {response}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to send block right command: {e}")
+            return False
 
     def cleanup(self) -> None:
         """Clean up serial connection"""
