@@ -95,3 +95,17 @@ build/
 
 # Monitoring data
 prometheus_data/
+
+# Arduino CLI binary
+bin/
+
+# Debug images
+debug_frame_*.jpg
+*.png
+*.jpeg
+
+# Training data
+training_data/
+
+# Shell scripts (temporary)
+run_ball_tracking.sh

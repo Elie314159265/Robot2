@@ -179,14 +179,34 @@ class CameraControllerLibcameraCLI:
             width, height = self.resolution
             frame_size = width * height * 3 // 2  # YUV420 size
 
+            logger.info(f"Capture loop started: expecting {frame_size} bytes per frame")
+
+            frame_index = 0
             while self.is_running and self.process:
+                # Check if process is still alive
+                if self.process.poll() is not None:
+                    logger.error(f"rpicam-vid process died! Return code: {self.process.poll()}")
+                    # Log stderr
+                    try:
+                        stderr_output = self.process.stderr.read().decode('utf-8', errors='ignore')
+                        logger.error(f"rpicam-vid stderr: {stderr_output}")
+                    except:
+                        pass
+                    break
+
                 # Read YUV420 frame from stdout
                 yuv_data = self.process.stdout.read(frame_size)
 
                 if len(yuv_data) != frame_size:
-                    if self.debug:
-                        logger.debug(f"Incomplete frame: {len(yuv_data)}/{frame_size}")
+                    logger.warning(f"Incomplete frame: {len(yuv_data)}/{frame_size}")
+                    if len(yuv_data) == 0:
+                        logger.error("No data from rpicam-vid stdout!")
+                        break
                     continue
+
+                frame_index += 1
+                if frame_index == 1:
+                    logger.info(f"✅ First frame received: {len(yuv_data)} bytes")
 
                 # Convert YUV420 to RGB
                 try:

@@ -34,7 +34,7 @@ from pycoral.adapters import common
 from pycoral.adapters import detect
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
@@ -44,10 +44,14 @@ class StreamingOutput(io.BufferedIOBase):
     def __init__(self):
         self.frame = None
         self.condition = Condition()
+        self.frame_count = 0
 
     def write(self, buf):
         with self.condition:
             self.frame = buf
+            self.frame_count += 1
+            if self.frame_count % 30 == 0:
+                logger.info(f"ストリーム出力: {self.frame_count} フレーム送信完了")
             self.condition.notify_all()
 
 
@@ -82,6 +86,7 @@ class StreamingHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(content)
         elif self.path == '/stream.mjpg':
+            logger.info(f"📹 ストリーミングクライアント接続: {self.client_address}")
             self.send_response(200)
             self.send_header('Age', 0)
             self.send_header('Cache-Control', 'no-cache, private')
@@ -89,16 +94,28 @@ class StreamingHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=FRAME')
             self.end_headers()
             try:
+                frame_sent = 0
                 while True:
                     with output.condition:
-                        output.condition.wait()
+                        if output.frame is None:
+                            logger.warning("⚠️  フレームが利用不可、待機中...")
+                        output.condition.wait(timeout=5.0)  # 5秒タイムアウト
                         frame = output.frame
+
+                    if frame is None:
+                        logger.warning("⚠️  タイムアウト後もフレームがNone")
+                        continue
+
                     self.wfile.write(b'--FRAME\r\n')
                     self.send_header('Content-Type', 'image/jpeg')
                     self.send_header('Content-Length', len(frame))
                     self.end_headers()
                     self.wfile.write(frame)
                     self.wfile.write(b'\r\n')
+
+                    frame_sent += 1
+                    if frame_sent == 1:
+                        logger.info(f"✅ 最初のフレームをクライアントに送信")
             except Exception as e:
                 logger.warning(f'Removed streaming client {self.client_address}: {str(e)}')
         elif self.path == '/stats':
@@ -425,7 +442,13 @@ def process_frames(camera, tracker, serial_controller):
         # フレーム取得
         frame = camera.capture_frame()
         if frame is None:
+            if frame_count % 30 == 0:
+                logger.warning("⚠️  フレーム取得失敗（None）")
             continue
+
+        # 最初のフレーム取得成功をログ
+        if frame_count == 0:
+            logger.info(f"✅ 最初のフレーム取得成功: shape={frame.shape}, dtype={frame.dtype}")
 
         # TPU検出実行（毎フレーム）
         frame_count += 1
@@ -471,10 +494,9 @@ def process_frames(camera, tracker, serial_controller):
         current_servo_tilt = tilt_angle
         tracking_state = tracker.state
 
-        # サーボコマンドを送信（3フレームごと）
-        if frame_count % 3 == 0:
-            if serial_controller.is_connected:
-                serial_controller.set_pan_tilt(pan_angle, tilt_angle)
+        # サーボコマンドを送信（毎フレーム - 高速応答）
+        if serial_controller.is_connected:
+            serial_controller.set_pan_tilt(pan_angle, tilt_angle)
 
         # 検出結果を描画
         if last_detections:
@@ -502,9 +524,14 @@ def process_frames(camera, tracker, serial_controller):
         _, jpeg = cv2.imencode('.jpg', frame_bgr, [cv2.IMWRITE_JPEG_QUALITY, 80])
 
         # ストリーミング出力に書き込み
+        jpeg_bytes = jpeg.tobytes()
         with output.condition:
-            output.frame = jpeg.tobytes()
+            output.frame = jpeg_bytes
             output.condition.notify_all()
+
+        # 最初のフレーム出力成功をログ
+        if frame_count == 1:
+            logger.info(f"✅ 最初のJPEGフレーム出力成功: {len(jpeg_bytes)} bytes")
 
 
 if __name__ == '__main__':
@@ -550,10 +577,11 @@ if __name__ == '__main__':
 
     # PID制御器初期化（1軸：パンのみ）
     logger.info("🎛️  PID制御器を初期化中...")
-    # PIDゲインは要調整（現在は初期値）
+    # PIDゲインは要調整（高速応答設定）
     # Note: サーボは水平方向（パン）のみで、サーボドライバ0番を使用
     # servo_min/maxは1回の更新での最大調整量（度）
-    pid_pan = PIDController(kp=1.0, ki=0.1, kd=0.2, servo_min=-15, servo_max=15)
+    # 高速化: kpを増加、最大調整量を拡大
+    pid_pan = PIDController(kp=2.0, ki=0.15, kd=0.3, servo_min=-25, servo_max=25)
     logger.info("✅ PID制御器初期化完了")
 
     # トラッカー初期化（1軸：水平方向のみ）
