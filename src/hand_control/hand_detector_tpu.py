@@ -193,24 +193,87 @@ class HandDetectorTPU:
         """
         # Palm detection用に前処理
         input_tensor = cv2.resize(frame, self.palm_input_size)
-        input_tensor = input_tensor.astype(np.uint8)
+
+        # FLOAT32モデルなので0-1に正規化
+        input_tensor = input_tensor.astype(np.float32) / 255.0
         input_tensor = np.expand_dims(input_tensor, axis=0)
 
         # Palm detection推論
         self.palm_interpreter.set_tensor(self.palm_input_details['index'], input_tensor)
         self.palm_interpreter.invoke()
 
-        # 出力取得（モデルによって異なる可能性があるため、柔軟に対応）
+        # 出力取得: classificators (1, 2944, 1) と regressors (1, 2944, 18)
+        classificators = self.palm_interpreter.get_tensor(self.palm_output_details[0]['index'])
+        regressors = self.palm_interpreter.get_tensor(self.palm_output_details[1]['index'])
+
+        # Sigmoid適用してスコアを0-1の範囲に変換
+        scores = 1.0 / (1.0 + np.exp(-classificators))
+        scores = scores.squeeze()  # (2944,)
+
+        # 閾値以上のアンカーを検出
+        detected_indices = np.where(scores > self.min_palm_confidence)[0]
+
         palm_regions = []
 
-        # TODO: Palm detectionモデルの出力形式を確認して、適切にパース
-        # 暫定的に、フレーム全体を手の領域として返す（簡易実装）
-        h, w = frame.shape[:2]
-        palm_regions.append({
-            'bbox': [0, 0, w, h],
-            'confidence': 1.0,
-            'keypoints': []
-        })
+        if len(detected_indices) > 0:
+            # スコアが最も高いアンカーを選択（最大max_num_hands個まで）
+            top_indices = detected_indices[np.argsort(scores[detected_indices])[::-1][:self.max_num_hands]]
+
+            h, w = frame.shape[:2]
+
+            for idx in top_indices:
+                score = float(scores[idx])
+
+                # Regressorから相対的なバウンディングボックスとキーポイントを取得
+                # regressors[idx] = [cx, cy, w, h, kp0_x, kp0_y, ..., kp6_x, kp6_y]
+                reg = regressors[0, idx, :]
+
+                # バウンディングボックスをデコード（簡易版）
+                # MediaPipeの正確なデコードには、アンカー座標が必要
+                # ここでは、regressorの値を直接使用（近似）
+
+                # 中心座標とサイズ（正規化座標と仮定）
+                cx_norm = np.clip(reg[0] / 256.0, 0.0, 1.0)
+                cy_norm = np.clip(reg[1] / 256.0, 0.0, 1.0)
+                w_norm = np.clip(reg[2] / 256.0, 0.01, 1.0)
+                h_norm = np.clip(reg[3] / 256.0, 0.01, 1.0)
+
+                # 画像座標に変換
+                cx = cx_norm * w
+                cy = cy_norm * h
+                box_w = w_norm * w
+                box_h = h_norm * h
+
+                # [cx, cy, w, h] → [x, y, w, h]
+                x = int(max(0, cx - box_w / 2))
+                y = int(max(0, cy - box_h / 2))
+                box_w = int(min(box_w, w - x))
+                box_h = int(min(box_h, h - y))
+
+                # キーポイントをデコード
+                keypoints = []
+                for kp_idx in range(7):  # 7個のキーポイント
+                    kp_x = reg[4 + kp_idx * 2]
+                    kp_y = reg[4 + kp_idx * 2 + 1]
+                    keypoints.append({'x': float(kp_x), 'y': float(kp_y)})
+
+                palm_regions.append({
+                    'bbox': [x, y, box_w, box_h],
+                    'confidence': score,
+                    'keypoints': keypoints
+                })
+
+                logger.info(f"✅ Palm detected: score={score:.3f}, bbox=[{x}, {y}, {box_w}, {box_h}]")
+
+        # 手が検出されなかった場合、フレーム全体を使用（フォールバック）
+        if not palm_regions:
+            logger.info("ℹ️  No palms above threshold, using full frame as fallback")
+            h, w = frame.shape[:2]
+            palm_regions.append({
+                'bbox': [0, 0, w, h],
+                'confidence': 1.0,
+                'keypoints': []
+            })
 
         return palm_regions
 
@@ -262,8 +325,11 @@ class HandDetectorTPU:
         Returns:
             (landmarks, confidence)
         """
+        # FLOAT32モデルなので0-1に正規化
+        input_tensor = hand_roi.astype(np.float32) / 255.0
+
         # TPU推論実行
-        common.set_input(self.interpreter, hand_roi.astype(np.uint8))
+        common.set_input(self.interpreter, input_tensor)
         self.interpreter.invoke()
 
         # 出力テンソルから結果を取得

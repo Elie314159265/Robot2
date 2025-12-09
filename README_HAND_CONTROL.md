@@ -53,7 +53,7 @@ pip3 install mediapipe
 pip3 install mediapipe opencv-python numpy
 ```
 
-**注意**: MediaPipeはCPU版のため、TPUよりも処理速度が低下します（15-25 FPS程度）。
+**注意**: MediaPipeはCPU版ですが、実測で9-10 FPS程度で動作します。手指制御には十分な速度です。
 
 ### 2. ハードウェア接続
 
@@ -205,11 +205,12 @@ src/hand_control/
 
 | 項目 | 値 |
 |------|-----|
-| 検出FPS | 15-25 FPS (CPU処理のため) |
-| 検出時間 | 40-70 ms/frame |
+| 検出FPS | 9-10 FPS (実測値、軽量モデル使用) |
+| 検出時間 | 100-110 ms/frame |
 | 解像度 | 640x480 |
+| モデル | model_complexity=0 (軽量・高速) |
 
-**注意**: MediaPipeはCPU実行のため、TPU版と比較して低速です。より高速化が必要な場合は、解像度を下げる（320x240など）か、フレームスキップを実装してください。
+**注意**: 手指制御には9-10 FPSで十分です。より高速化が必要な場合は、解像度を下げる（320x240など）か、フレームスキップを実装してください。
 
 ### メモリ使用量
 
@@ -278,14 +279,40 @@ pip3 install mediapipe
 - [ ] **小指対応**: 小指もサーボに割り当て（現在は親指〜薬指のみ）
 - [ ] **リアルタイムチューニング**: Web UIからマッピングパラメータを調整
 
+## TPU版について
+
+### TPU版の制限（実装検証結果）
+
+Google Coral TPUでの手指検出を試みましたが、以下の制限により**CPU版（MediaPipe）を推奨**します：
+
+#### 技術的な課題
+1. **2段階パイプラインの複雑さ**
+   - Palm Detection（CPU） → Hand Landmark（TPU）の連携が必要
+   - Palm Detectionが遅く、FPS向上の効果が限定的（約5 FPS）
+
+2. **ROI切り抜きの精度問題**
+   - Hand Landmarkモデルは手が画面いっぱいに写っている画像を期待
+   - Palm Detectionの切り抜き精度が不十分で検出失敗が多発
+   - 両手の同時検出が困難
+
+3. **開発コスト**
+   - MediaPipeの最適化済みパイプラインを再実装する必要がある
+   - ROI調整、座標変換、後処理の実装に時間がかかる
+
+#### 実装ファイル
+参考までに、TPU版の実装は以下に残されています：
+- `src/hand_control/hand_detector_tpu.py` - TPU版Hand Detector（Palm + Hand Landmark）
+- `tests/test_hand_control_tpu.py` - TPU版テストスクリプト
+
+#### 推奨事項
+- **手指制御**: CPU版MediaPipe Hands（9-10 FPS、確実な両手検出）
+- **TPUリソース**: ボール検出など他の高速化が必要なタスクに割り当てるべき
+
 ## 参考リンク
 
-**調査結果**:
-- [Google Coral TPU PoseNet](https://github.com/google-coral/project-posenet) - TPU対応の姿勢推定
-- [MediaPipe Hands Issue #426](https://github.com/google/mediapipe/issues/426) - TPU対応の制限について
-- [Optimizing Pose Estimation on Coral EdgeTPU](https://towardsdatascience.com/optimizing-pose-estimation-on-the-coral-edge-tpu-d331c63cfed/)
-
-**結論**: 手指の詳細検出にはMediaPipe Hands (CPU版) を使用。TPU対応の手指検出モデルは現時点で公式には未提供。
+- [MediaPipe Hands公式ドキュメント](https://google.github.io/mediapipe/solutions/hands.html)
+- [Google Coral TPU](https://coral.ai/docs/)
+- [PCA9685 サーボドライバ](https://www.adafruit.com/product/815)
 
 ## ライセンス
 

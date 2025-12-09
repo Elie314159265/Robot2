@@ -38,13 +38,15 @@ class HandDetector:
         self,
         max_num_hands: int = 2,
         min_detection_confidence: float = 0.7,
-        min_tracking_confidence: float = 0.5
+        min_tracking_confidence: float = 0.5,
+        model_complexity: int = 1
     ):
         """
         Args:
             max_num_hands: 検出する手の最大数（デフォルト: 2）
             min_detection_confidence: 検出信頼度の閾値（デフォルト: 0.7）
             min_tracking_confidence: 追跡信頼度の閾値（デフォルト: 0.5）
+            model_complexity: モデルの複雑さ（0=軽量・高速, 1=標準, デフォルト: 1）
         """
         self.mp_hands = mp.solutions.hands
         self.mp_drawing = mp.solutions.drawing_utils
@@ -53,6 +55,7 @@ class HandDetector:
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=max_num_hands,
+            model_complexity=model_complexity,
             min_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence
         )

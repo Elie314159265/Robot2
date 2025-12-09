@@ -31,8 +31,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 # Import components
 from src.camera import CameraController
 from src.arduino.serial_controller import SerialController
-from src.hand_control.hand_detector_tpu import HandDetectorTPU
-from src.hand_control import FingerMapper
+from src.hand_control import HandDetectorTPU, FingerMapper
 
 logging.basicConfig(
     level=logging.INFO,
@@ -498,12 +497,16 @@ if __name__ == '__main__':
     try:
         hand_detector = HandDetectorTPU(
             model_path='models/hand_landmark_new_256x256_integer_quant_edgetpu.tflite',
-            max_num_hands=1,
-            min_detection_confidence=0.5
+            palm_model_path='models/palm_detection_builtin_256_integer_quant.tflite',
+            max_num_hands=2,  # 両手検出
+            min_detection_confidence=0.01,  # 閾値を大幅に下げて検出テスト
+            min_palm_confidence=0.5
         )
         logger.info("✅ TPU初期化完了")
     except Exception as e:
         logger.error(f"❌ TPU初期化失敗: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
     # FingerMapper初期化

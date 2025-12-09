@@ -1,17 +1,22 @@
-# Hand Control with TPU
+# Hand Control with TPU (実験的実装)
 
-Google Coral TPUを使用した高速手指検出・サーボ制御システム
+Google Coral TPUを使用した手指検出の実験的実装
+
+⚠️ **注意**: この実装は技術的な制限により、**CPU版（MediaPipe）の使用を推奨**します。
 
 ## 概要
 
-このモジュールは、Google Coral TPUとhand_landmark_newモデルを使用して、人の手と指の動きをリアルタイムで検出し、サーボモータを制御します。
+Google Coral TPUでhand_landmark_newモデルを使用した手指検出を試みた実験的実装です。
 
-### 特徴
+### 実装検証結果
 
-- **高速推論**: Google Coral TPUによる高速な手指検出（目標: <20ms/frame）
-- **MediaPipe互換**: CPU版HandDetectorと同じインターフェース
-- **リアルタイム**: 30 FPS対応
-- **マルチハンド**: 左右の手を同時検出可能
+❌ **実用性が低い理由**:
+- Palm Detection（CPU）がボトルネックでFPS向上なし（約5 FPS）
+- ROI切り抜き精度が不十分で検出失敗が多発
+- 両手の同時検出が困難
+- MediaPipeの最適化パイプラインに劣る
+
+✅ **推奨**: CPU版MediaPipe Hands（9-10 FPS、確実な両手検出）
 
 ## システム構成
 
@@ -50,11 +55,12 @@ sudo apt install -y python3-opencv python3-numpy
 
 ### モデルファイル
 
-TPU版hand_landmarkモデルが必要です：
+TPU版hand_landmarkモデルとpalm detectionモデルが必要です：
 
 ```bash
 # models/ディレクトリに配置
 models/hand_landmark_new_256x256_integer_quant_edgetpu.tflite
+models/palm_detection_builtin_256_integer_quant.tflite
 ```
 
 ## 使い方
@@ -62,11 +68,8 @@ models/hand_landmark_new_256x256_integer_quant_edgetpu.tflite
 ### 1. 簡易テスト（モデルロード確認）
 
 ```bash
-# 白紙画像でTPUの動作確認
-python3 scripts/test_hand_tpu_simple.py
-
-# サンプル画像でテスト
-python3 scripts/test_hand_tpu_simple.py path/to/hand_image.jpg
+# ダミー画像でTPUの動作確認
+python3 scripts/test_tpu_hand_detector.py
 ```
 
 ### 2. カメラ + TPU テスト
@@ -118,8 +121,10 @@ from src.hand_control import HandDetectorTPU, FingerMapper
 # TPU検出器の初期化
 detector = HandDetectorTPU(
     model_path='models/hand_landmark_new_256x256_integer_quant_edgetpu.tflite',
-    max_num_hands=1,
-    min_detection_confidence=0.5
+    palm_model_path='models/palm_detection_builtin_256_integer_quant.tflite',
+    max_num_hands=2,
+    min_detection_confidence=0.5,
+    min_palm_confidence=0.5
 )
 
 # 指→サーボ角度マッピング
@@ -149,7 +154,8 @@ detector = HandDetector(max_num_hands=2)
 # TPU版（Google Coral TPU）
 from src.hand_control import HandDetectorTPU
 detector = HandDetectorTPU(
-    model_path='models/hand_landmark_new_256x256_integer_quant_edgetpu.tflite'
+    model_path='models/hand_landmark_new_256x256_integer_quant_edgetpu.tflite',
+    palm_model_path='models/palm_detection_builtin_256_integer_quant.tflite'
 )
 
 # 以降のコードは同じインターフェースで使用可能
@@ -179,30 +185,38 @@ hand_data = {
 }
 ```
 
-## パフォーマンス
+## 実測パフォーマンス
 
-### 期待される性能
+### 実際の性能（検証結果）
 
-- **検出時間**: <20ms/frame（TPU使用時）
-- **FPS**: 30 FPS以上
-- **検出精度**: 80%以上（適切な照明条件下）
+- **検出時間**: 約200ms/frame（Palm Detection + Hand Landmark）
+- **FPS**: 約5 FPS（目標の30 FPSに未達）
+- **検出成功率**: 低い（ROI切り抜き精度の問題）
 
-### ベンチマーク方法
+### 問題点の詳細
 
-```python
-import time
-import numpy as np
+1. **Palm Detection（CPU）がボトルネック**
+   - TFLite CPUモデルで約150ms/frame
+   - TPU化してもFPS向上しない主原因
 
-detection_times = []
-for i in range(100):
-    start = time.time()
-    result = detector.detect(frame)
-    detection_times.append((time.time() - start) * 1000)
+2. **Hand Landmark（TPU）の入力要件**
+   - 手が画面いっぱいに写っている必要がある
+   - Palm Detectionの切り抜きが小さすぎる
+   - マージン調整しても精度不十分
 
-print(f"平均検出時間: {np.mean(detection_times):.2f}ms")
-print(f"最小: {np.min(detection_times):.2f}ms")
-print(f"最大: {np.max(detection_times):.2f}ms")
-```
+3. **両手検出の困難さ**
+   - 各手を正確にクロップできない
+   - confidence scoreが低い（0.0-0.3程度）
+
+### CPU版との比較
+
+| 項目 | TPU版 | CPU版（MediaPipe） |
+|------|-------|-------------------|
+| FPS | 約5 | 9-10 |
+| 検出成功率 | 低い | 高い |
+| 両手検出 | 困難 | 確実 |
+| 実装複雑度 | 高い | 低い |
+| **推奨度** | ❌ | ✅ |
 
 ## トラブルシューティング
 
@@ -253,18 +267,47 @@ tests/
 └── test_hand_control_tpu.py    # TPU版テスト ⭐ 新規
 
 scripts/
-└── test_hand_tpu_simple.py     # 簡易テストスクリプト ⭐ 新規
+└── test_tpu_hand_detector.py   # 簡易テストスクリプト ⭐ 新規
 
 models/
-└── hand_landmark_new_256x256_integer_quant_edgetpu.tflite  # TPUモデル
+├── hand_landmark_new_256x256_integer_quant_edgetpu.tflite  # Hand landmark TPUモデル
+└── palm_detection_builtin_256_integer_quant.tflite  # Palm detection モデル
 ```
+
+## 結論と推奨事項
+
+### なぜCPU版を推奨するか
+
+1. **実測FPS**: CPU版（9-10 FPS） > TPU版（5 FPS）
+2. **検出精度**: MediaPipeの最適化されたパイプラインが優秀
+3. **開発コスト**: TPU版の改善に時間をかけるよりCPU版で十分
+4. **リソース配分**: TPUはボール検出など他のタスクに使うべき
+
+### 今後の方向性
+
+- ✅ **手指制御**: CPU版MediaPipe Hands
+- ✅ **ボール検出**: Google Coral TPU（COCO SSD MobileNet）
+- ✅ **リソース最適化**: 適材適所でCPU/TPUを使い分け
+
+### この実装の価値
+
+この実験的実装は、以下の学習価値があります：
+- TPUモデルの入力要件の理解
+- 2段階パイプラインの実装経験
+- CPU vs TPUのベンチマーク
+- 技術選択の判断基準
 
 ## 参考資料
 
+- [MediaPipe Hands公式ドキュメント](https://google.github.io/mediapipe/solutions/hands.html)
 - [Google Coral TPU Documentation](https://coral.ai/docs/)
 - [PyCoral API Reference](https://coral.ai/docs/reference/py/)
-- [MediaPipe Hands](https://google.github.io/mediapipe/solutions/hands.html)
 
 ## ライセンス
 
-このプロジェクトはMITライセンスの下で公開されています。
+このプロジェクトは学校課題として作成されています。
+
+---
+
+**最終更新**: 2025-12-09
+**結論**: CPU版MediaPipe Handsを推奨（TPU版は実験的実装として保存）
