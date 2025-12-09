@@ -482,14 +482,15 @@ if __name__ == '__main__':
     print("🖐️  手指検出・サーボ制御テスト")
     print("=" * 70)
 
-    # MediaPipe Hands初期化
-    logger.info("🖐️  MediaPipe Hands初期化中...")
+    # MediaPipe Hands初期化（最適化版）
+    logger.info("🖐️  MediaPipe Hands初期化中（最適化モード）...")
     hand_detector = HandDetector(
-        max_num_hands=2,
-        min_detection_confidence=0.7,
-        min_tracking_confidence=0.5
+        max_num_hands=2,                    # 両手検出を維持
+        model_complexity=0,                  # 軽量モデル使用（高速化）
+        min_detection_confidence=0.85,      # 閾値をさらに上げて処理時間削減
+        min_tracking_confidence=0.7         # 追跡信頼度も上げる
     )
-    logger.info("✅ MediaPipe Hands初期化完了")
+    logger.info("✅ MediaPipe Hands初期化完了（軽量モデル、9-10 FPS目標）")
 
     # FingerMapper初期化
     logger.info("🎛️  FingerMapper初期化中...")
@@ -503,7 +504,7 @@ if __name__ == '__main__':
     logger.info("✅ FingerMapper初期化完了")
 
     # カメラ初期化
-    logger.info("📷 カメラを初期化中...")
+    logger.info("📷 カメラを初期化中（640x480 @ 30fps）...")
     camera = CameraController(resolution=(640, 480), framerate=30, debug=False)
 
     if not camera.initialize():
