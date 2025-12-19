@@ -6,8 +6,8 @@ MediaPipe Handsを使用して人の手と指の角度を検出し、
 サーボモータの角度にマッピングして制御します。
 
 サーボ割り当て:
-- 左手: 親指(0番), 人差し指(2番), 中指(4番), 薬指(6番)
-- 右手: 親指(1番), 人差し指(3番), 中指(5番), 薬指(7番)
+- 左手: 親指(0番/FL hip), 人差し指(2番/FR hip), 中指(8番/BL hip), 薬指(6番/BR hip)
+- 右手: 親指(1番/FL knee), 人差し指(3番/FR knee), 中指(5番/BL knee), 薬指(7番/BR knee)
 
 使い方:
   python3 tests/test_hand_control.py
@@ -254,9 +254,9 @@ img {
 <div class="info">
     <p><strong>システム構成:</strong></p>
     <p>RaspberryPi Camera → MediaPipe Hands (CPU) → PCA9685 Servo Driver</p>
-    <p><strong>サーボ割り当て:</strong></p>
-    <p>左手: 親指(0), 人差し指(2), 中指(4), 薬指(6)</p>
-    <p>右手: 親指(1), 人差し指(3), 中指(5), 薬指(7)</p>
+    <p><strong>サーボ割り当て (walk_program.ino準拠):</strong></p>
+    <p>左手: 親指(0/FL hip), 人差し指(2/FR hip), 中指(8/BL hip), 薬指(6/BR hip)</p>
+    <p>右手: 親指(1/FL knee), 人差し指(3/FR knee), 中指(5/BL knee), 薬指(7/BR knee)</p>
 
     <div class="stats">
         <div class="stat-item">
@@ -293,7 +293,7 @@ img {
                 <span class="finger-angle" id="left_index">--°</span>
             </div>
             <div class="finger-item">
-                <span class="finger-name">中指 (Ch 4)</span>
+                <span class="finger-name">中指 (Ch 8)</span>
                 <span class="finger-angle" id="left_middle">--°</span>
             </div>
             <div class="finger-item">
@@ -337,11 +337,11 @@ setInterval(function() {
             document.getElementById('left').textContent = data.left_hand_detections;
             document.getElementById('right').textContent = data.right_hand_detections;
 
-            // サーボ状態を更新
+            // サーボ状態を更新（walk_program.ino準拠: 中指はch 8）
             const servos = data.servo_states;
             document.getElementById('left_thumb').textContent = servos[0] !== undefined ? servos[0] + '°' : '--°';
             document.getElementById('left_index').textContent = servos[2] !== undefined ? servos[2] + '°' : '--°';
-            document.getElementById('left_middle').textContent = servos[4] !== undefined ? servos[4] + '°' : '--°';
+            document.getElementById('left_middle').textContent = servos[8] !== undefined ? servos[8] + '°' : '--°';  // ch 8
             document.getElementById('left_ring').textContent = servos[6] !== undefined ? servos[6] + '°' : '--°';
             document.getElementById('right_thumb').textContent = servos[1] !== undefined ? servos[1] + '°' : '--°';
             document.getElementById('right_index').textContent = servos[3] !== undefined ? servos[3] + '°' : '--°';
