@@ -38,22 +38,22 @@ const int BR_KNEE = 7;   // 右後脚の膝
 // --- 左前脚 (FL) ---
 const int FL_HIP_NEUTRAL = 263;
 const int FL_KNEE_UP = 100;
-const int FL_KNEE_DOWN = 250;
+const int FL_KNEE_DOWN = 300;    // ch1: デフォルト300
 
 // --- 右前脚 (FR) ---
 const int FR_HIP_NEUTRAL = 263;
 const int FR_KNEE_UP = 380;
-const int FR_KNEE_DOWN = 250;
+const int FR_KNEE_DOWN = 150;    // ch3: デフォルト150
 
 // --- 左後脚 (BL) - ボールブロック用 ---
 const int BL_HIP_NEUTRAL = 200;
 const int BL_KNEE_UP = 150;      // 膝を上げた時
-const int BL_KNEE_DOWN = 300;    // 膝を下ろした時
+const int BL_KNEE_DOWN = 400;    // ch5: デフォルト400
 
 // --- 右後脚 (BR) - ボールブロック用 ---
 const int BR_HIP_NEUTRAL = 263;
 const int BR_KNEE_UP = 380;      // 膝を上げた時
-const int BR_KNEE_DOWN = 250;    // 膝を下ろした時
+const int BR_KNEE_DOWN = 150;    // ch7: デフォルト150
 
 // ========================================
 // 超音波センサーピン定義

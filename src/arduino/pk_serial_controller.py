@@ -26,13 +26,19 @@ class PKServoConfig:
     BR_HIP = 6
     BR_KNEE = 7
 
+    # 左前脚 (FL)
+    FL_KNEE_DOWN = 300    # ch1: デフォルト300
+
+    # 右前脚 (FR)
+    FR_KNEE_DOWN = 150    # ch3: デフォルト150
+
     # 左後脚 (BL) - ボールブロック用
     BL_KNEE_UP = 150
-    BL_KNEE_DOWN = 300
+    BL_KNEE_DOWN = 400    # ch5: デフォルト400
 
     # 右後脚 (BR) - ボールブロック用
     BR_KNEE_UP = 380
-    BR_KNEE_DOWN = 250
+    BR_KNEE_DOWN = 150    # ch7: デフォルト150
 
 
 class PKSerialController:
