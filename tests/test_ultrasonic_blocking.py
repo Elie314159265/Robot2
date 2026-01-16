@@ -6,6 +6,10 @@
 - 左側センサー検知 → 右後脚(7番) + 右前脚(3番)を5秒間上げる
 - 右側センサー検知 → 左後脚(5番) + 左前脚(1番)を5秒間上げる
 
+配線:
+  左側センサー(HC-SR04): Trig=D8, Echo=D9
+  右側センサー(HC-SR04): Trig=D10, Echo=D11
+
 使い方:
   python3 tests/test_ultrasonic_blocking.py
 """

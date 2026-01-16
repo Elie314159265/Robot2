@@ -58,8 +58,19 @@ const int BR_KNEE_DOWN = 150;    // ch7: デフォルト150
 // ========================================
 // 超音波センサーピン定義
 // ========================================
+// 左側センサー (HC-SR04)
+//   VCC  -> Arduino 5V
+//   GND  -> Arduino GND
+//   Trig -> Arduino D8
+//   Echo -> Arduino D9
 const int TRIG_PIN_LEFT = 8;
 const int ECHO_PIN_LEFT = 9;
+
+// 右側センサー (HC-SR04)
+//   VCC  -> Arduino 5V
+//   GND  -> Arduino GND
+//   Trig -> Arduino D10
+//   Echo -> Arduino D11
 const int TRIG_PIN_RIGHT = 10;
 const int ECHO_PIN_RIGHT = 11;
 
