@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 # Import components
 from src.camera import CameraController
-from src.arduino.serial_controller import SerialController
+from src.arduino.pk_serial_controller import PKSerialController
 from src.tracking.pid_controller import PIDController
 from src.tracking.tracker import BallTracker
 
@@ -646,7 +646,7 @@ if __name__ == '__main__':
 
     # Arduinoシリアル通信初期化
     logger.info("📡 Arduinoに接続中...")
-    serial_controller = SerialController(port="/dev/ttyACM0", baudrate=9600)
+    serial_controller = PKSerialController(port="/dev/ttyACM0", baudrate=9600)
 
     if not serial_controller.connect():
         logger.error("❌ Arduinoへの接続に失敗しました。Arduino接続が必要です。")
