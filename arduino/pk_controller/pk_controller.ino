@@ -248,23 +248,29 @@ float readDistanceRight() {
 }
 
 // ========================================
-// ボールブロック: 左側（右後脚BR ch7を上げる）
+// ボールブロック: 左側（右後脚BR ch7 + 右前脚FR ch3を上げる）
 // ========================================
 void blockBallLeft() {
-  // ボールが画面左側 → 右後脚(BR)を上げてブロック
-  // BR_KNEE (ch 7): DOWN=250 → UP=380
-  pwm.setPWM(BR_KNEE, 0, BR_KNEE_UP);   // 380: 膝を上げる
+  // ボールが画面左側 → 右後脚(BR ch7) + 右前脚(FR ch3)を上げてブロック
+  // BR_KNEE (ch 7): DOWN=150 → UP=380
+  // FR_KNEE (ch 3): DOWN=150 → UP=380
+  pwm.setPWM(BR_KNEE, 0, BR_KNEE_UP);   // ch7: 380 膝を上げる
+  pwm.setPWM(FR_KNEE, 0, FR_KNEE_UP);   // ch3: 380 膝を上げる
   delay(5000);                           // 5秒間保持
-  pwm.setPWM(BR_KNEE, 0, BR_KNEE_DOWN); // 250: 膝を下ろす
+  pwm.setPWM(BR_KNEE, 0, BR_KNEE_DOWN); // ch7: 150 膝を下ろす
+  pwm.setPWM(FR_KNEE, 0, FR_KNEE_DOWN); // ch3: 150 膝を下ろす
 }
 
 // ========================================
-// ボールブロック: 右側（左後脚BL ch5を上げる）
+// ボールブロック: 右側（左後脚BL ch5 + 左前脚FL ch1を上げる）
 // ========================================
 void blockBallRight() {
-  // ボールが画面右側 → 左後脚(BL)を上げてブロック
-  // BL_KNEE (ch 5): DOWN=300 → UP=150
-  pwm.setPWM(BL_KNEE, 0, BL_KNEE_UP);   // 150: 膝を上げる
+  // ボールが画面右側 → 左後脚(BL ch5) + 左前脚(FL ch1)を上げてブロック
+  // BL_KNEE (ch 5): DOWN=400 → UP=150
+  // FL_KNEE (ch 1): DOWN=300 → UP=100
+  pwm.setPWM(BL_KNEE, 0, BL_KNEE_UP);   // ch5: 150 膝を上げる
+  pwm.setPWM(FL_KNEE, 0, FL_KNEE_UP);   // ch1: 100 膝を上げる
   delay(5000);                           // 5秒間保持
-  pwm.setPWM(BL_KNEE, 0, BL_KNEE_DOWN); // 300: 膝を下ろす
+  pwm.setPWM(BL_KNEE, 0, BL_KNEE_DOWN); // ch5: 400 膝を下ろす
+  pwm.setPWM(FL_KNEE, 0, FL_KNEE_DOWN); // ch1: 300 膝を下ろす
 }

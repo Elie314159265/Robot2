@@ -168,8 +168,9 @@ class PKSerialController:
         """
         ボールブロック（左側）
 
-        ボールが画面左側に現れた場合、右後脚(BR ch7)を上げてブロック
-        PWM: 250 (DOWN) → 380 (UP) → 250 (DOWN)
+        ボールが画面左側に現れた場合、右後脚(BR ch7) + 右前脚(FR ch3)を上げてブロック
+        BR ch7: 150 (DOWN) → 380 (UP) → 150 (DOWN)
+        FR ch3: 150 (DOWN) → 380 (UP) → 150 (DOWN)
 
         Returns:
             成功時True
@@ -186,7 +187,7 @@ class PKSerialController:
             self.serial.timeout = self.timeout
 
             if response == "OK":
-                logger.info(f"Ball blocked LEFT (BR knee: {self.config.BR_KNEE_DOWN} -> {self.config.BR_KNEE_UP} -> {self.config.BR_KNEE_DOWN})")
+                logger.info(f"Ball blocked LEFT (BR ch7 + FR ch3)")
                 return True
             else:
                 logger.error(f"Block left failed: {response}")
@@ -200,8 +201,9 @@ class PKSerialController:
         """
         ボールブロック（右側）
 
-        ボールが画面右側に現れた場合、左後脚(BL ch5)を上げてブロック
-        PWM: 300 (DOWN) → 150 (UP) → 300 (DOWN)
+        ボールが画面右側に現れた場合、左後脚(BL ch5) + 左前脚(FL ch1)を上げてブロック
+        BL ch5: 400 (DOWN) → 150 (UP) → 400 (DOWN)
+        FL ch1: 300 (DOWN) → 100 (UP) → 300 (DOWN)
 
         Returns:
             成功時True
@@ -218,7 +220,7 @@ class PKSerialController:
             self.serial.timeout = self.timeout
 
             if response == "OK":
-                logger.info(f"Ball blocked RIGHT (BL knee: {self.config.BL_KNEE_DOWN} -> {self.config.BL_KNEE_UP} -> {self.config.BL_KNEE_DOWN})")
+                logger.info(f"Ball blocked RIGHT (BL ch5 + FL ch1)")
                 return True
             else:
                 logger.error(f"Block right failed: {response}")

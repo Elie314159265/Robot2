@@ -3,8 +3,8 @@
 ボールブロッキングテスト - カメラ + TPU検出 + ボールブロック機能
 
 ボールを検出し、画面の左右どちら側に現れたかによって足を上げてブロックします。
-- 画面左側にボール → 右後脚(7番)を5秒間上げる
-- 画面右側にボール → 左後脚(5番)を5秒間上げる
+- 画面左側にボール → 右後脚(7番) + 右前脚(3番)を5秒間上げる
+- 画面右側にボール → 左後脚(5番) + 左前脚(1番)を5秒間上げる
 
 使い方:
   python3 tests/test_ball_blocking.py
@@ -250,7 +250,7 @@ img {
 <div class="info">
     <p><strong>システム構成:</strong></p>
     <p>RaspberryPi Camera Module 3 → Google Coral TPU → Arduino → サーボモータ</p>
-    <p><strong>動作:</strong> ボールが左側に現れたら右足(7番)、右側なら左足(5番)を5秒間上げる</p>
+    <p><strong>動作:</strong> ボールが左側に現れたら右足(7番+3番)、右側なら左足(5番+1番)を5秒間上げる</p>
 
     <div class="stats">
         <div class="stat-item">
@@ -676,8 +676,8 @@ if __name__ == '__main__':
         logger.info("=" * 70)
         logger.info("機能:")
         logger.info("  - カメラでボールを検出")
-        logger.info("  - 左側検出 → 右後脚(7番)を5秒間上げる")
-        logger.info("  - 右側検出 → 左後脚(5番)を5秒間上げる")
+        logger.info("  - 左側検出 → 右後脚(7番) + 右前脚(3番)を5秒間上げる")
+        logger.info("  - 右側検出 → 左後脚(5番) + 左前脚(1番)を5秒間上げる")
         logger.info("=" * 70)
         logger.info("終了するには Ctrl+C を押してください")
         logger.info("=" * 70)
