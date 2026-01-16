@@ -138,12 +138,12 @@ arduino-cli monitor -p /dev/ttyACM0 -c baudrate=9600
 python3 -c "import serial; import cv2; import numpy; print('OK')"
 ```
 
-### PK課題テスト実行
+### PK課題テスト実行（カメラ + TPU版）
 
 ```bash
 cd /home/user/Robot2
 
-# ボールブロッキングテスト実行
+# ボールブロッキングテスト実行（カメラ + TPU）
 python3 tests/test_ball_blocking.py
 ```
 
@@ -159,6 +159,22 @@ IPアドレスの確認：
 ```bash
 hostname -I
 ```
+
+### PK課題テスト実行（超音波センサー版）
+
+カメラ・TPU不要で超音波センサーのみでテストする場合：
+
+```bash
+cd /home/user/Robot2
+
+# 超音波センサーボールブロッキングテスト実行
+python3 tests/test_ultrasonic_blocking.py
+```
+
+**動作:**
+- 左側センサー（30cm以内）検知 → 右後脚(7番) + 右前脚(3番)を5秒間上げる
+- 右側センサー（30cm以内）検知 → 左後脚(5番) + 左前脚(1番)を5秒間上げる
+- ブラウザアクセス不要、ターミナルで動作確認できます
 
 ---
 
@@ -242,7 +258,8 @@ Robot2/
 │       ├── pk_serial_controller.py   # PK専用
 │       └── serial_controller.py      # ハンドコントロール用
 ├── tests/
-│   └── test_ball_blocking.py    # PK課題テスト
+│   ├── test_ball_blocking.py        # PK課題テスト（カメラ + TPU）
+│   └── test_ultrasonic_blocking.py  # PK課題テスト（超音波センサー）
 └── docs/
     └── PK_SETUP_GUIDE.md        # このファイル
 ```
@@ -250,6 +267,8 @@ Robot2/
 ---
 
 ## クイックスタート
+
+### カメラ + TPU版
 
 ```bash
 # 1. Arduinoにアップロード
@@ -261,4 +280,17 @@ python3 tests/test_ball_blocking.py
 
 # 3. ブラウザでアクセス
 # http://<RaspberryPiのIP>:8000
+```
+
+### 超音波センサー版（シンプル）
+
+```bash
+# 1. Arduinoにアップロード
+arduino-cli compile --fqbn arduino:avr:uno arduino/pk_controller/pk_controller.ino && \
+arduino-cli upload -p /dev/ttyACM0 --fqbn arduino:avr:uno arduino/pk_controller/pk_controller.ino
+
+# 2. Pythonスクリプト実行
+python3 tests/test_ultrasonic_blocking.py
+
+# 3. ターミナルで動作確認（ブラウザ不要）
 ```
